@@ -1,3 +1,4 @@
+python"""
 Storage manager for the A2 Discord bot.
 """
 import json
@@ -430,4 +431,4 @@ class StorageManager:
         emotion_manager.dm_enabled_users = await self.load_dm_settings()
         
         print("Data load complete")
-        return profile_count > 0  # Return success indicator
+        return profile_count > 0
