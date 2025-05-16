@@ -1,3 +1,4 @@
+python"""
 User profile model for the A2 Discord bot.
 """
 from datetime import datetime, timezone
