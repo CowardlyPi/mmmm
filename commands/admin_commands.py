@@ -8,8 +8,12 @@ import random
 import discord
 import subprocess
 from collections import defaultdict, Counter
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from discord.ext import commands
+from pathlib import Path
+
+# Import configuration
+from config import DATA_DIR
 
 def setup_admin_commands(bot, emotion_manager, conversation_manager, storage_manager):
     """Set up commands that require administrator permissions"""
@@ -533,20 +537,29 @@ def setup_admin_commands(bot, emotion_manager, conversation_manager, storage_man
     async def show_log(ctx, lines: int = 20):
         """Show the most recent lines from the bot's log file"""
         try:
-            # Use the 'tail' command to get the last N lines of the log
-            log_file = "/var/log/a2bot.log"  # Update this to your actual log path
+            # Get the correct log path in the data directory
+            log_file = DATA_DIR / "logs" / "a2bot.log"
             
             # Check if file exists
-            if not os.path.exists(log_file):
+            if not log_file.exists():
                 await ctx.send(f"❌ Log file not found at {log_file}")
-                # Try to find actual log files
-                possible_logs = subprocess.check_output("find /var -name '*.log' | grep -i bot", shell=True).decode()
-                if possible_logs:
-                    await ctx.send(f"Possible log files:\n```\n{possible_logs}\n```")
+                # Try to find other log files in the data directory
+                try:
+                    possible_logs = list(DATA_DIR.glob("**/*.log"))
+                    if possible_logs:
+                        log_list = "\n".join(str(log) for log in possible_logs)
+                        await ctx.send(f"Possible log files found:\n```\n{log_list}\n```")
+                except Exception as e:
+                    await ctx.send(f"Error searching for logs: {e}")
                 return
             
-            # Get log lines
-            output = subprocess.check_output(f"tail -n {lines} {log_file}", shell=True).decode()
+            # Read the log file directly using Python instead of shell commands
+            # This is more portable and safer
+            with open(log_file, 'r', encoding='utf-8') as f:
+                # Get the last N lines
+                all_lines = f.readlines()
+                log_lines = all_lines[-lines:] if lines < len(all_lines) else all_lines
+                output = ''.join(log_lines)
             
             # Split into chunks if too long
             if len(output) > 1900:
@@ -558,6 +571,45 @@ def setup_admin_commands(bot, emotion_manager, conversation_manager, storage_man
                 
         except Exception as e:
             await ctx.send(f"❌ Error retrieving logs: {e}")
+            
+    @bot.command(name="logs_dir")
+    @commands.has_permissions(administrator=True)
+    async def show_logs_dir(ctx):
+        """Show information about the logs directory"""
+        logs_dir = DATA_DIR / "logs"
+        
+        # Check if the directory exists
+        if not logs_dir.exists():
+            await ctx.send(f"❌ Logs directory not found at {logs_dir}")
+            return
+            
+        # List log files with sizes and modification times
+        files = list(logs_dir.glob("*.log*"))
+        if not files:
+            await ctx.send(f"No log files found in {logs_dir}")
+            return
+            
+        file_info = []
+        for file in files:
+            size_kb = file.stat().st_size / 1024
+            mod_time = datetime.fromtimestamp(file.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+            file_info.append(f"{file.name} - {size_kb:.2f}KB - Last modified: {mod_time}")
+            
+        # Create an embed to display the information
+        embed = discord.Embed(
+            title="A2 Bot Log Files",
+            description=f"Logs directory: {logs_dir}",
+            color=discord.Color.blue()
+        )
+        
+        # Add file information
+        embed.add_field(
+            name="Available Log Files",
+            value="\n".join(file_info) or "No log files found",
+            inline=False
+        )
+        
+        await ctx.send(embed=embed)
 
     @bot.command(name="test_event")
     @commands.has_permissions(administrator=True)
