@@ -14,6 +14,9 @@ import discord
 from discord.ext import commands, tasks
 from openai import OpenAI
 
+# Import logging utilities
+from utils.logging_helper import get_logger
+
 # Import managers
 from managers.conversation import ConversationManager
 from managers.emotion import EmotionManager
@@ -41,6 +44,9 @@ class A2Bot:
     """Main A2 bot implementation handling commands and event loops"""
     
     def __init__(self, token, app_id, openai_api_key, openai_org_id="", openai_project_id=""):
+        # Get logger
+        self.logger = get_logger()
+        
         # Set up Discord bot
         intents = discord.Intents.default()
         intents.message_content = True
@@ -60,6 +66,10 @@ class A2Bot:
         
         # Set up OpenAI client
         self.openai_client = OpenAI(api_key=openai_api_key)
+        
+        # Store relationship levels and personality states for easy access
+        self.bot.RELATIONSHIP_LEVELS = RELATIONSHIP_LEVELS
+        self.bot.PERSONALITY_STATES = PERSONALITY_STATES
         
         # Initialize managers
         self.storage_manager = StorageManager(DATA_DIR, USERS_DIR, PROFILES_DIR, DM_SETTINGS_FILE, 
@@ -84,19 +94,19 @@ class A2Bot:
         @self.bot.event
         async def on_ready():
             """Handle bot startup"""
-            print("A2 is online.")
-            print(f"Connected to {len(self.bot.guilds)} guilds")
-            print(f"Serving {sum(len(g.members) for g in self.bot.guilds)} users")
+            self.logger.info("A2 is online.")
+            self.logger.info(f"Connected to {len(self.bot.guilds)} guilds")
+            self.logger.info(f"Serving {sum(len(g.members) for g in self.bot.guilds)} users")
             
             # Debug data directories
-            print(f"Checking data directory: {DATA_DIR}")
-            print(f"Directory exists: {DATA_DIR.exists()}")
-            print(f"Profile directory: {PROFILES_DIR}")
-            print(f"Directory exists: {PROFILES_DIR.exists()}")
+            self.logger.info(f"Checking data directory: {DATA_DIR}")
+            self.logger.info(f"Directory exists: {DATA_DIR.exists()}")
+            self.logger.info(f"Profile directory: {PROFILES_DIR}")
+            self.logger.info(f"Directory exists: {PROFILES_DIR.exists()}")
             
             # Check for existing profile files
             profile_files = list(PROFILES_DIR.glob("*.json"))
-            print(f"Found {len(profile_files)} profile files")
+            self.logger.info(f"Found {len(profile_files)} profile files")
             
             # Load all data
             await self.storage_manager.load_data(self.emotion_manager, self.conversation_manager)
@@ -112,8 +122,8 @@ class A2Bot:
             # Start background tasks
             self._start_background_tasks()
             
-            print("All tasks started successfully.")
-            print("Dynamic stats system enabled")
+            self.logger.info("All tasks started successfully.")
+            self.logger.info("Dynamic stats system enabled")
             
         @self.bot.event
         async def on_message(message):
@@ -145,69 +155,93 @@ class A2Bot:
         
                 # Get or create user profile with name from Discord
                 self.conversation_manager.get_or_create_profile(uid, message.author.display_name)
+                
+                self.logger.info(f"New user initialized: {message.author.display_name} ({uid})")
             
                 await self.response_generator.handle_first_message_of_day(message, uid)
             
-                is_cmd = any(content.startswith(p) for p in self.prefixes)
-                is_mention = self.bot.user in getattr(message, 'mentions', [])
-                is_dm = isinstance(message.channel, discord.DMChannel)
+            is_cmd = any(content.startswith(p) for p in self.prefixes)
+            is_mention = self.bot.user in getattr(message, 'mentions', [])
+            is_dm = isinstance(message.channel, discord.DMChannel)
             
-                if not (is_cmd or is_mention or is_dm):
-                    return
+            if not (is_cmd or is_mention or is_dm):
+                return
             
-                await self.bot.process_commands(message)
+            await self.bot.process_commands(message)
             
-                if is_cmd:
-                    return
+            if is_cmd:
+                return
             
-                trust = self.emotion_manager.user_emotions.get(uid, {}).get('trust', 0)
-                resp = await self.response_generator.generate_a2_response(content, trust, uid, self.storage_manager)
+            # Handle regular messages
+            self.logger.info(f"Processing message from {message.author.display_name} ({uid}): {content[:30]}...")
+            trust = self.emotion_manager.user_emotions.get(uid, {}).get('trust', 0)
+            resp = await self.response_generator.generate_a2_response(content, trust, uid, self.storage_manager)
             
-                # Track user's emotional state in history
-                if uid in self.emotion_manager.user_emotions:
-                    e = self.emotion_manager.user_emotions[uid]
-                    # Initialize emotion history if it doesn't exist
-                    if "emotion_history" not in e:
-                        e["emotion_history"] = []
+            # Track user's emotional state in history
+            if uid in self.emotion_manager.user_emotions:
+                e = self.emotion_manager.user_emotions[uid]
+                # Initialize emotion history if it doesn't exist
+                if "emotion_history" not in e:
+                    e["emotion_history"] = []
                 
-                    # Only record history if enough time has passed since last entry
-                    if not e["emotion_history"] or (
-                        datetime.now(timezone.utc) - 
-                        datetime.fromisoformat(e["emotion_history"][-1]["timestamp"])
-                    ).total_seconds() > 3600:  # One hour between entries
-                        e["emotion_history"].append({
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                            "trust": e.get("trust", 0),
-                            "attachment": e.get("attachment", 0),
-                            "resentment": e.get("resentment", 0),
-                            "protectiveness": e.get("protectiveness", 0),
-                            "affection_points": e.get("affection_points", 0)
-                        })
+                # Only record history if enough time has passed since last entry
+                if not e["emotion_history"] or (
+                    datetime.now(timezone.utc) - 
+                    datetime.fromisoformat(e["emotion_history"][-1]["timestamp"])
+                ).total_seconds() > 3600:  # One hour between entries
+                    e["emotion_history"].append({
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "trust": e.get("trust", 0),
+                        "attachment": e.get("attachment", 0),
+                        "resentment": e.get("resentment", 0),
+                        "protectiveness": e.get("protectiveness", 0),
+                        "affection_points": e.get("affection_points", 0)
+                    })
                     
-                    # Keep history at a reasonable size
-                    if len(e["emotion_history"]) > 50:
-                        e["emotion_history"] = e["emotion_history"][-50:]
+                # Keep history at a reasonable size
+                if len(e["emotion_history"]) > 50:
+                    e["emotion_history"] = e["emotion_history"][-50:]
             
-                # Record interaction data for future analysis
-                await self.emotion_manager.record_interaction_data(uid, content, resp, self.storage_manager)
+            # Record interaction data for future analysis
+            await self.emotion_manager.record_interaction_data(uid, content, resp, self.storage_manager)
             
-                # For longer messages, A2 might sometimes give a thoughtful response
-                if len(content) > 100 and random.random() < 0.3 and trust > 5:
-                    await message.channel.send(f"A2: ...")
-                    await asyncio.sleep(1.5)
+            # For longer messages, A2 might sometimes give a thoughtful response
+            if len(content) > 100 and random.random() < 0.3 and trust > 5:
+                await message.channel.send(f"A2: ...")
+                await asyncio.sleep(1.5)
             
-                await message.channel.send(f"A2: {resp}")
+            await message.channel.send(f"A2: {resp}")
             
-                # Occasionally respond with a follow-up based on relationship
-                if random.random() < 0.1 and trust > 7:
-                    await asyncio.sleep(3)
-                    followups = [
-                        "Something else?",
-                        "...",
-                        "Still processing that.",
-                        "Interesting.",
-                    ]
-                    await message.channel.send(f"A2: {random.choice(followups)}")
+            # Occasionally respond with a follow-up based on relationship
+            if random.random() < 0.1 and trust > 7:
+                await asyncio.sleep(3)
+                followups = [
+                    "Something else?",
+                    "...",
+                    "Still processing that.",
+                    "Interesting.",
+                ]
+                await message.channel.send(f"A2: {random.choice(followups)}")
+                
+        @self.bot.event
+        async def on_command_error(ctx, error):
+            """Handle command errors"""
+            if isinstance(error, commands.CommandNotFound):
+                return
+            
+            if isinstance(error, commands.MissingRequiredArgument):
+                await ctx.send(f"A2: Missing required argument: {error.param.name}")
+                return
+                
+            if isinstance(error, commands.MissingPermissions):
+                await ctx.send(f"A2: You don't have the required permissions to use this command.")
+                return
+                
+            # Log the error
+            self.logger.error(f"Command error in {ctx.command}: {error}")
+            
+            # Notify the user
+            await ctx.send(f"A2: An error occurred while processing your command.\nError: {error}")
     
     def _setup_commands(self):
         """Set up commands for the bot"""
@@ -222,34 +256,42 @@ class A2Bot:
         # Define task functions with storage manager
         @tasks.loop(minutes=10)
         async def check_inactive_users_task():
+            self.logger.debug("Running check_inactive_users_task")
             await self.response_generator.check_inactive_users(self.bot, self.storage_manager)
             
         @tasks.loop(hours=1)
         async def decay_affection_task():
+            self.logger.debug("Running decay_affection_task")
             await self.emotion_manager.decay_affection(self.storage_manager)
             
         @tasks.loop(hours=1)
         async def decay_annoyance_task():
+            self.logger.debug("Running decay_annoyance_task")
             await self.emotion_manager.decay_annoyance(self.storage_manager)
             
         @tasks.loop(hours=24)
         async def daily_affection_bonus_task():
+            self.logger.debug("Running daily_affection_bonus_task")
             await self.emotion_manager.daily_affection_bonus(self.storage_manager)
             
         @tasks.loop(hours=1)
         async def dynamic_emotional_adjustments_task():
+            self.logger.debug("Running dynamic_emotional_adjustments_task")
             await self.emotion_manager.dynamic_emotional_adjustments(self.storage_manager)
             
         @tasks.loop(hours=3)
         async def environmental_mood_effects_task():
+            self.logger.debug("Running environmental_mood_effects_task")
             await self.emotion_manager.environmental_mood_effects(self.storage_manager)
             
         @tasks.loop(hours=4)
         async def trigger_random_events_task():
+            self.logger.debug("Running trigger_random_events_task")
             await self.response_generator.trigger_random_events(self.bot, self.storage_manager)
             
         @tasks.loop(hours=1)
         async def save_data_task():
+            self.logger.debug("Running save_data_task")
             await self.storage_manager.save_data(self.emotion_manager, self.conversation_manager)
         
         # Start all tasks
@@ -264,4 +306,9 @@ class A2Bot:
     
     def run(self):
         """Run the bot"""
-        self.bot.run(self.token)
+        self.logger.info("Starting Discord bot...")
+        try:
+            self.bot.run(self.token)
+        except Exception as e:
+            self.logger.error(f"Error running bot: {e}")
+            raise
