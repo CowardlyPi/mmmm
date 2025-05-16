@@ -1,16 +1,10 @@
-python"""
-Storage manager for the A2 Discord bot.
-"""
-import json
-import asyncio
-from datetime import datetime, timezone
-from collections import Counter
-from pathlib import Path
+from utils.logging_helper import get_logger
 
 class StorageManager:
     """Handles all data persistence operations"""
     
     def __init__(self, data_dir, users_dir, profiles_dir, dm_settings_file, user_profiles_dir, conversations_dir):
+        self.logger = get_logger()
         self.data_dir = data_dir
         self.users_dir = users_dir
         self.profiles_dir = profiles_dir
@@ -25,52 +19,52 @@ class StorageManager:
         
     def verify_data_directories(self):
         """Ensure all required data directories exist and are writable"""
-        print(f"Data directory: {self.data_dir}")
-        print(f"Directory exists: {self.data_dir.exists()}")
+        self.logger.info(f"Data directory: {self.data_dir}")
+        self.logger.info(f"Directory exists: {self.data_dir.exists()}")
         
         # Check data directory
         if not self.data_dir.exists():
             try:
                 self.data_dir.mkdir(parents=True, exist_ok=True)
-                print(f"Created data directory: {self.data_dir}")
+                self.logger.info(f"Created data directory: {self.data_dir}")
             except Exception as e:
-                print(f"ERROR: Failed to create data directory: {e}")
+                self.logger.error(f"Failed to create data directory: {e}")
                 return False
         
         # Check users directory
         if not self.users_dir.exists():
             try:
                 self.users_dir.mkdir(parents=True, exist_ok=True)
-                print(f"Created users directory: {self.users_dir}")
+                self.logger.info(f"Created users directory: {self.users_dir}")
             except Exception as e:
-                print(f"ERROR: Failed to create users directory: {e}")
+                self.logger.error(f"Failed to create users directory: {e}")
                 return False
         
         # Check profiles directory
         if not self.profiles_dir.exists():
             try:
                 self.profiles_dir.mkdir(parents=True, exist_ok=True)
-                print(f"Created profiles directory: {self.profiles_dir}")
+                self.logger.info(f"Created profiles directory: {self.profiles_dir}")
             except Exception as e:
-                print(f"ERROR: Failed to create profiles directory: {e}")
+                self.logger.error(f"Failed to create profiles directory: {e}")
                 return False
         
         # Check user profiles directory
         if not self.user_profiles_dir.exists():
             try:
                 self.user_profiles_dir.mkdir(parents=True, exist_ok=True)
-                print(f"Created user profiles directory: {self.user_profiles_dir}")
+                self.logger.info(f"Created user profiles directory: {self.user_profiles_dir}")
             except Exception as e:
-                print(f"ERROR: Failed to create user profiles directory: {e}")
+                self.logger.error(f"Failed to create user profiles directory: {e}")
                 return False
         
         # Check conversations directory
         if not self.conversations_dir.exists():
             try:
                 self.conversations_dir.mkdir(parents=True, exist_ok=True)
-                print(f"Created conversations directory: {self.conversations_dir}")
+                self.logger.info(f"Created conversations directory: {self.conversations_dir}")
             except Exception as e:
-                print(f"ERROR: Failed to create conversations directory: {e}")
+                self.logger.error(f"Failed to create conversations directory: {e}")
                 return False
         
         # Check write access
@@ -78,9 +72,9 @@ class StorageManager:
             test_file = self.data_dir / "write_test.tmp"
             test_file.write_text("Test write access", encoding="utf-8")
             test_file.unlink()  # Remove test file
-            print("Write access verified: SUCCESS")
+            self.logger.info("Write access verified: SUCCESS")
         except Exception as e:
-            print(f"ERROR: Failed to verify write access: {e}")
+            self.logger.error(f"Failed to verify write access: {e}")
             return False
         
         return True
@@ -97,7 +91,7 @@ class StorageManager:
                 temp_path.replace(path)
                 return True
         except Exception as e:
-            print(f"Error saving file {path}: {e}")
+            self.logger.error(f"Error saving file {path}: {e}")
         return False
         
     async def load_user_profile(self, user_id, emotion_manager):
@@ -109,11 +103,11 @@ class StorageManager:
             try:
                 file_content = profile_path.read_text(encoding="utf-8")
                 if not file_content.strip():
-                    print(f"Warning: Empty profile file for user {user_id}")
+                    self.logger.warning(f"Empty profile file for user {user_id}")
                     return {}
                     
                 data = json.loads(file_content)
-                print(f"Successfully loaded profile for user {user_id}")
+                self.logger.info(f"Successfully loaded profile for user {user_id}")
                 
                 # Extract relationship data if present
                 if "relationship" in data:
@@ -125,7 +119,7 @@ class StorageManager:
                 
                 return data
             except Exception as e:
-                print(f"Error loading profile for user {user_id}: {e}")
+                self.logger.error(f"Error loading profile for user {user_id}: {e}")
         
         return {}
         
@@ -147,32 +141,32 @@ class StorageManager:
             # Save main profile
             success = await self.save_file(path, data)
             if success:
-                print(f"Successfully saved profile for user {user_id}")
+                self.logger.info(f"Successfully saved profile for user {user_id}")
             
             # Save memories if they exist
             if user_id in emotion_manager.user_memories and emotion_manager.user_memories[user_id]:
                 memory_path = self.profiles_dir / f"{user_id}_memories.json"
                 mem_success = await self.save_file(memory_path, emotion_manager.user_memories[user_id])
                 if mem_success:
-                    print(f"Saved {len(emotion_manager.user_memories[user_id])} memories for user {user_id}")
+                    self.logger.info(f"Saved {len(emotion_manager.user_memories[user_id])} memories for user {user_id}")
             
             # Save events if they exist
             if user_id in emotion_manager.user_events and emotion_manager.user_events[user_id]:
                 events_path = self.profiles_dir / f"{user_id}_events.json"
                 evt_success = await self.save_file(events_path, emotion_manager.user_events[user_id])
                 if evt_success:
-                    print(f"Saved {len(emotion_manager.user_events[user_id])} events for user {user_id}")
+                    self.logger.info(f"Saved {len(emotion_manager.user_events[user_id])} events for user {user_id}")
             
             # Save milestones if they exist
             if user_id in emotion_manager.user_milestones and emotion_manager.user_milestones[user_id]:
                 milestones_path = self.profiles_dir / f"{user_id}_milestones.json"
                 mile_success = await self.save_file(milestones_path, emotion_manager.user_milestones[user_id])
                 if mile_success:
-                    print(f"Saved {len(emotion_manager.user_milestones[user_id])} milestones for user {user_id}")
+                    self.logger.info(f"Saved {len(emotion_manager.user_milestones[user_id])} milestones for user {user_id}")
                     
             return True
         except Exception as e:
-            print(f"Error saving data for user {user_id}: {e}")
+            self.logger.error(f"Error saving data for user {user_id}: {e}")
             return False
     
     async def save_conversation(self, user_id, conversation_manager):
@@ -181,19 +175,23 @@ class StorageManager:
             # Save conversation history
             if user_id in conversation_manager.conversations:
                 conv_path = self.conversations_dir / f"{user_id}_conversations.json"
-                await self.save_file(conv_path, conversation_manager.conversations[user_id])
+                conv_success = await self.save_file(conv_path, conversation_manager.conversations[user_id])
+                if conv_success:
+                    self.logger.debug(f"Saved conversation for user {user_id}")
                 
             # Save conversation summary
             if user_id in conversation_manager.conversation_summaries:
                 summary_path = self.conversations_dir / f"{user_id}_summary.json"
-                await self.save_file(summary_path, {
+                summary_success = await self.save_file(summary_path, {
                     "summary": conversation_manager.conversation_summaries[user_id],
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 })
+                if summary_success:
+                    self.logger.debug(f"Saved conversation summary for user {user_id}")
                 
             return True
         except Exception as e:
-            print(f"Error saving conversation for user {user_id}: {e}")
+            self.logger.error(f"Error saving conversation for user {user_id}: {e}")
             return False
     
     async def load_conversation(self, user_id, conversation_manager):
@@ -205,6 +203,7 @@ class StorageManager:
                 file_content = conv_path.read_text(encoding="utf-8")
                 if file_content.strip():
                     conversation_manager.conversations[user_id] = json.loads(file_content)
+                    self.logger.debug(f"Loaded conversation for user {user_id}")
             
             # Load conversation summary
             summary_path = self.conversations_dir / f"{user_id}_summary.json"
@@ -213,20 +212,23 @@ class StorageManager:
                 if file_content.strip():
                     data = json.loads(file_content)
                     conversation_manager.conversation_summaries[user_id] = data.get("summary", "")
+                    self.logger.debug(f"Loaded conversation summary for user {user_id}")
             
             return True
         except Exception as e:
-            print(f"Error loading conversation for user {user_id}: {e}")
+            self.logger.error(f"Error loading conversation for user {user_id}: {e}")
             return False
     
     async def save_user_profile_data(self, user_id, profile):
         """Save user profile data"""
         try:
             profile_path = self.user_profiles_dir / f"{user_id}_profile.json"
-            await self.save_file(profile_path, profile.to_dict())
-            return True
+            success = await self.save_file(profile_path, profile.to_dict())
+            if success:
+                self.logger.debug(f"Saved user profile for {user_id}")
+            return success
         except Exception as e:
-            print(f"Error saving user profile for {user_id}: {e}")
+            self.logger.error(f"Error saving user profile for {user_id}: {e}")
             return False
     
     async def load_user_profile_data(self, user_id, conversation_manager):
@@ -239,10 +241,11 @@ class StorageManager:
                     data = json.loads(file_content)
                     profile = conversation_manager.user_profiles[user_id].__class__.from_dict(data)
                     conversation_manager.user_profiles[user_id] = profile
+                    self.logger.debug(f"Loaded user profile for {user_id}")
                     return True
             return False
         except Exception as e:
-            print(f"Error loading user profile for {user_id}: {e}")
+            self.logger.error(f"Error loading user profile for {user_id}: {e}")
             return False
             
     async def load_dm_settings(self):
@@ -254,22 +257,26 @@ class StorageManager:
                 if file_content.strip():
                     data = json.loads(file_content)
                     dm_enabled_users = set(data.get('enabled_users', []))
-                    print(f"Loaded DM settings for {len(dm_enabled_users)} users")
+                    self.logger.info(f"Loaded DM settings for {len(dm_enabled_users)} users")
                 else:
-                    print("Warning: Empty DM settings file")
+                    self.logger.warning("Empty DM settings file")
             else:
-                print("No DM settings file found")
+                self.logger.info("No DM settings file found")
         except Exception as e:
-            print(f"Error loading DM settings: {e}")
+            self.logger.error(f"Error loading DM settings: {e}")
         return dm_enabled_users
         
     async def save_dm_settings(self, dm_enabled_users):
         """Save DM permission settings"""
-        return await self.save_file(self.dm_settings_file, {"enabled_users": list(dm_enabled_users)})
+        success = await self.save_file(self.dm_settings_file, {"enabled_users": list(dm_enabled_users)})
+        if success:
+            self.logger.debug(f"Saved DM settings for {len(dm_enabled_users)} users")
+        return success
     
     async def save_data(self, emotion_manager, conversation_manager=None):
         """Save all emotional and conversation data"""
         success = True
+        self.logger.info(f"Starting data save for {len(emotion_manager.user_emotions)} users")
         
         # Save emotional data for all users
         for user_id in emotion_manager.user_emotions:
@@ -291,7 +298,7 @@ class StorageManager:
         dm_success = await self.save_dm_settings(emotion_manager.dm_enabled_users)
         success = success and dm_success
         
-        print(f"Data save complete for {len(emotion_manager.user_emotions)} users")
+        self.logger.info(f"Data save complete for {len(emotion_manager.user_emotions)} users")
         return success
     
     async def load_data(self, emotion_manager, conversation_manager):
@@ -306,10 +313,10 @@ class StorageManager:
         
         # Ensure directories exist
         if not self.verify_data_directories():
-            print("ERROR: Data directories not available. Memory functions disabled.")
+            self.logger.error("Data directories not available. Memory functions disabled.")
             return False
         
-        print("Beginning data load process...")
+        self.logger.info("Beginning data load process...")
         
         # Load profile data
         profile_count = 0
@@ -320,7 +327,7 @@ class StorageManager:
                     uid = int(file.stem)
                     file_content = file.read_text(encoding="utf-8")
                     if not file_content.strip():
-                        print(f"Warning: Empty file {file}")
+                        self.logger.warning(f"Empty file {file}")
                         continue
                         
                     data = json.loads(file_content)
@@ -337,9 +344,9 @@ class StorageManager:
                     profile_count += 1
                 except Exception as e:
                     error_count += 1
-                    print(f"Error loading profile {file}: {e}")
+                    self.logger.error(f"Error loading profile {file}: {e}")
         
-        print(f"Loaded {profile_count} profiles with {error_count} errors")
+        self.logger.info(f"Loaded {profile_count} profiles with {error_count} errors")
         
         # Load memories data
         memory_count = 0
@@ -351,7 +358,7 @@ class StorageManager:
                     emotion_manager.user_memories[uid] = json.loads(file_content)
                     memory_count += 1
             except Exception as e:
-                print(f"Error loading memories {file}: {e}")
+                self.logger.error(f"Error loading memories {file}: {e}")
         
         # Load events data
         events_count = 0
@@ -363,7 +370,7 @@ class StorageManager:
                     emotion_manager.user_events[uid] = json.loads(file_content)
                     events_count += 1
             except Exception as e:
-                print(f"Error loading events {file}: {e}")
+                self.logger.error(f"Error loading events {file}: {e}")
         
         # Load milestones data
         milestones_count = 0
@@ -375,7 +382,7 @@ class StorageManager:
                     emotion_manager.user_milestones[uid] = json.loads(file_content)
                     milestones_count += 1
             except Exception as e:
-                print(f"Error loading milestones {file}: {e}")
+                self.logger.error(f"Error loading milestones {file}: {e}")
         
         # Load user profiles
         profile_count = 0
@@ -385,12 +392,13 @@ class StorageManager:
                 file_content = file.read_text(encoding="utf-8")
                 if file_content.strip():
                     data = json.loads(file_content)
-                    profile = conversation_manager.user_profiles[uid].__class__.from_dict(data)
+                    profile = conversation_manager.get_or_create_profile(uid)
+                    profile = profile.__class__.from_dict(data)
                     conversation_manager.user_profiles[uid] = profile
                     profile_count += 1
             except Exception as e:
-                print(f"Error loading user profile {file}: {e}")
-        print(f"Loaded {profile_count} user profiles")
+                self.logger.error(f"Error loading user profile {file}: {e}")
+        self.logger.info(f"Loaded {profile_count} user profiles")
 
         # Load conversation data
         conversation_count = 0
@@ -402,7 +410,7 @@ class StorageManager:
                     conversation_manager.conversations[uid] = json.loads(file_content)
                     conversation_count += 1
             except Exception as e:
-                print(f"Error loading conversation {file}: {e}")
+                self.logger.error(f"Error loading conversation {file}: {e}")
 
         # Load conversation summaries
         summary_count = 0
@@ -415,11 +423,10 @@ class StorageManager:
                     conversation_manager.conversation_summaries[uid] = data.get("summary", "")
                     summary_count += 1
             except Exception as e:
-                print(f"Error loading conversation summary {file}: {e}")
+                self.logger.error(f"Error loading conversation summary {file}: {e}")
 
-        print(f"Loaded {conversation_count} conversations and {summary_count} summaries")
-
-        print(f"Loaded {memory_count} memory files, {events_count} event files, {milestones_count} milestone files")
+        self.logger.info(f"Loaded {conversation_count} conversations and {summary_count} summaries")
+        self.logger.info(f"Loaded {memory_count} memory files, {events_count} event files, {milestones_count} milestone files")
         
         # Add any missing fields to existing user data
         for uid in emotion_manager.user_emotions:
@@ -430,5 +437,5 @@ class StorageManager:
         # Load DM settings
         emotion_manager.dm_enabled_users = await self.load_dm_settings()
         
-        print("Data load complete")
+        self.logger.info("Data load complete")
         return profile_count > 0
