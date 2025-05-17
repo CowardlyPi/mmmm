@@ -1,5 +1,5 @@
 """
-User-facing commands for the A2 Discord bot.
+User-facing commands for the A2 Discord bot with additional error handling.
 """
 import random
 import discord
@@ -34,10 +34,15 @@ def setup_user_commands(bot, emotion_manager, conversation_manager, storage_mana
         
         # Show progress to next stage if not at max
         if rel_data['next']:
-            progress_bar = "█" * int(rel_data['progress']/10) + "░" * (10 - int(rel_data['progress']/10))
+            # Guard against division by zero
+            progress = 0
+            if rel_data['next']['threshold'] - rel_data['current']['threshold'] != 0:
+                progress = rel_data['progress']
+            
+            progress_bar = "█" * int(progress/10) + "░" * (10 - int(progress/10))
             embed.add_field(
                 name=f"Progress to {rel_data['next']['name']}", 
-                value=f"`{progress_bar}` {rel_data['progress']:.1f}%",
+                value=f"`{progress_bar}` {progress:.1f}%",
                 inline=False
             )
         
@@ -50,8 +55,12 @@ def setup_user_commands(bot, emotion_manager, conversation_manager, storage_mana
             ("Affection", e.get('affection_points', 0), 1000, "💠"),
             ("Annoyance", e.get('annoyance', 0), 100, "🔥")
         ]:
-            # Normalize to 0-10 range for emoji bars
-            norm_val = value / max_val * 10 if max_val > 10 else value
+            # Ensure max_val is never zero to prevent division by zero
+            norm_val = 0
+            if max_val > 0:
+                # Normalize to 0-10 range for emoji bars
+                norm_val = value / max_val * 10 if max_val > 10 else value
+            
             bar = "█" * int(norm_val) + "░" * (10 - int(norm_val))
             
             if stat_name.lower() in ["trust", "attachment", "protectiveness", "resentment"]:
@@ -189,18 +198,23 @@ def setup_user_commands(bot, emotion_manager, conversation_manager, storage_mana
             inline=False
         )
         
-        # Add interaction stats
+        # Add interaction stats with safeguards against division by zero
         stats = emotion_manager.interaction_stats.get(uid, {})
         total = stats.get("total", 0)
-        if total > 0:
+        if total > 0:  # Only display if there are interactions
             positive = stats.get("positive", 0)
             negative = stats.get("negative", 0)
             neutral = stats.get("neutral", 0)
             
+            # Calculate percentages safely
+            pos_percent = (positive / total * 100) if total > 0 else 0
+            neg_percent = (negative / total * 100) if total > 0 else 0
+            neut_percent = (neutral / total * 100) if total > 0 else 0
+            
             stats_txt = f"Total interactions: {total}\n"
-            stats_txt += f"Positive: {positive} ({positive/total*100:.1f}%)\n"
-            stats_txt += f"Negative: {negative} ({negative/total*100:.1f}%)\n"
-            stats_txt += f"Neutral: {neutral} ({neutral/total*100:.1f}%)"
+            stats_txt += f"Positive: {positive} ({pos_percent:.1f}%)\n"
+            stats_txt += f"Negative: {negative} ({neg_percent:.1f}%)\n"
+            stats_txt += f"Neutral: {neutral} ({neut_percent:.1f}%)"
             
             embed.add_field(name="Interaction Analysis", value=stats_txt, inline=False)
         
@@ -215,9 +229,17 @@ def setup_user_commands(bot, emotion_manager, conversation_manager, storage_mana
         if e.get('protectiveness', 0) > 5:
             factors.append(f"Protective instincts (+{e.get('protectiveness', 0):.1f})")
         if e.get('affection_points', 0) > 50:
-            factors.append(f"Positive affection (+{e.get('affection_points', 0)/100:.1f})")
+            # Ensure we don't divide by zero
+            affection_score = 0
+            if abs(e.get('affection_points', 0)) > 0:
+                affection_score = e.get('affection_points', 0)/100
+            factors.append(f"Positive affection (+{affection_score:.1f})")
         elif e.get('affection_points', 0) < -20:
-            factors.append(f"Negative affection ({e.get('affection_points', 0)/100:.1f})")
+            # Ensure we don't divide by zero
+            affection_score = 0
+            if abs(e.get('affection_points', 0)) > 0:
+                affection_score = e.get('affection_points', 0)/100
+            factors.append(f"Negative affection ({affection_score:.1f})")
         
         if factors:
             embed.add_field(name="Key Factors", value="\n".join(factors), inline=False)
