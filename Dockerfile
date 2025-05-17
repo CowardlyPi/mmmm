@@ -12,6 +12,7 @@ ENV DATA_DIR=/mnt/data
 ENV TRANSFORMERS_OFFLINE=0
 ENV PYTHONIOENCODING=utf-8
 ENV TORCH_HOME=/app/.torch
+ENV ENABLE_ENHANCED_A2=1
 
 # Install system dependencies
 # Note: We're adding procps to get the 'free' command for memory diagnostics
@@ -44,11 +45,11 @@ RUN echo '#!/bin/bash\necho "Starting A2 Discord Bot"\necho "===================
     chmod +x /app/startup.sh
 
 # Create a debug script
-RUN echo '#!/usr/bin/env python\nimport os\nimport sys\nfrom pathlib import Path\nprint("=== DEBUG INFORMATION ===")\nprint(f"Python version: {sys.version}")\nprint(f"Current working directory: {os.getcwd()}")\nprint(f"Environment variables:")\nfor var in ["DISCORD_TOKEN", "OPENAI_API_KEY", "DATA_DIR"]:\n    print(f"  {var}: {'✓ SET' if os.getenv(var) else '✗ NOT SET'}")\nprint("\\nInstalled Python packages:")\nos.system("pip list")\nvolume_path = Path(os.getenv("DATA_DIR", "/mnt/data"))\nprint(f"\\nVolume path: {volume_path}")\nprint(f"Volume path exists: {volume_path.exists()}")\nif volume_path.exists():\n    try:\n        print("Contents:")\n        for item in volume_path.iterdir():\n            print(f"  {item}")\n    except Exception as e:\n        print(f"Error listing contents: {e}")\nprint("\\n=== DEBUG COMPLETE ===")\n' > /app/debug.py && \
+RUN echo '#!/usr/bin/env python\nimport os\nimport sys\nfrom pathlib import Path\nprint("=== DEBUG INFORMATION ===")\nprint(f"Python version: {sys.version}")\nprint(f"Current working directory: {os.getcwd()}")\nprint(f"Environment variables:")\nfor var in ["DISCORD_TOKEN", "OPENAI_API_KEY", "DATA_DIR", "ENABLE_ENHANCED_A2"]:\n    print(f"  {var}: {'✓ SET' if os.getenv(var) else '✗ NOT SET'}")\nprint("\\nInstalled Python packages:")\nos.system("pip list")\nvolume_path = Path(os.getenv("DATA_DIR", "/mnt/data"))\nprint(f"\\nVolume path: {volume_path}")\nprint(f"Volume path exists: {volume_path.exists()}")\nif volume_path.exists():\n    try:\n        print("Contents:")\n        for item in volume_path.iterdir():\n            print(f"  {item}")\n    except Exception as e:\n        print(f"Error listing contents: {e}")\nprint("\\n=== DEBUG COMPLETE ===")\n' > /app/debug.py && \
     chmod +x /app/debug.py
 
-# Copy main files
-COPY main.py config.py patch_openai.py bot.py ./
+# Copy main files (including enhanced_a2.py)
+COPY main.py config.py patch_openai.py bot.py enhanced_a2.py ./
 
 # Copy module directories
 COPY managers/ ./managers/
