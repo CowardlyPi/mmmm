@@ -23,6 +23,10 @@ from managers.emotion import EmotionManager
 from managers.storage import StorageManager
 from managers.response import ResponseGenerator
 
+# Import enhanced modules
+from enhanced_a2 import EnhancedResponseGenerator
+from commands.enhanced_commands import setup_enhanced_commands
+
 # Import utilities
 from utils.transformers_helper import (
     HAVE_TRANSFORMERS, initialize_transformers,
@@ -82,6 +86,15 @@ class A2Bot:
             self.conversation_manager
         )
         
+        # Initialize enhanced response generator
+        self.enhanced_generator = EnhancedResponseGenerator(
+            self.openai_client, 
+            self.emotion_manager, 
+            self.conversation_manager,
+            DATA_DIR
+        )
+        self.use_enhanced = os.getenv("ENABLE_ENHANCED_A2", "1") == "1"
+        
         # Store bot start time for uptime tracking
         self.bot.start_time = datetime.now(timezone.utc)
         
@@ -118,6 +131,11 @@ class A2Bot:
                     self.emotion_manager.user_emotions[uid]['first_interaction'] = (
                         self.emotion_manager.user_emotions[uid].get('last_interaction', now)
                     )
+            
+            # Initialize enhanced systems if enabled
+            if self.use_enhanced:
+                await self.enhanced_generator.initialize()
+                self.logger.info("Enhanced A2 systems initialized")
             
             # Start background tasks
             self._start_background_tasks()
@@ -175,7 +193,12 @@ class A2Bot:
             # Handle regular messages
             self.logger.info(f"Processing message from {message.author.display_name} ({uid}): {content[:30]}...")
             trust = self.emotion_manager.user_emotions.get(uid, {}).get('trust', 0)
-            resp = await self.response_generator.generate_a2_response(content, trust, uid, self.storage_manager)
+            
+            # Use enhanced generator if enabled
+            if hasattr(self, 'use_enhanced') and self.use_enhanced:
+                resp = await self.enhanced_generator.generate_enhanced_response(content, trust, uid, self.storage_manager)
+            else:
+                resp = await self.response_generator.generate_a2_response(content, trust, uid, self.storage_manager)
             
             # Track user's emotional state in history
             if uid in self.emotion_manager.user_emotions:
@@ -250,6 +273,10 @@ class A2Bot:
         
         # Set up admin commands
         setup_admin_commands(self.bot, self.emotion_manager, self.conversation_manager, self.storage_manager)
+        
+        # Set up enhanced commands if enabled
+        if self.use_enhanced:
+            setup_enhanced_commands(self.bot, self.enhanced_generator.enhanced_system)
     
     def _start_background_tasks(self):
         """Start all background tasks for the bot"""
