@@ -8,3 +8,7 @@ matplotlib==3.7.2
 psutil==5.9.5
 sentence-transformers==2.2.2
 faiss-cpu==1.7.4
+# PostgreSQL dependencies
+psycopg2-binary==2.9.6
+SQLAlchemy==2.0.12
+alembic==1.11.1  # For database migrations
