@@ -7,6 +7,7 @@ import re
 import json
 from datetime import datetime, timezone, timedelta
 from collections import deque
+from utils.logging_helper import get_logger
 
 class ResponseGenerator:
     """Handles conversation management and response generation"""
@@ -19,7 +20,8 @@ class ResponseGenerator:
         self.MAX_RECENT_RESPONSES = 10
         self.user_references = {}  # Store verified user references
         self.topic_memory = {}  # Remember topics for later reference
-    
+        self.logger = get_logger()
+        
     def identify_user_references(self, content, current_user_id):
         """Identify references to other users in the message content with enhanced detection
         
