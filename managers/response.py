@@ -71,6 +71,16 @@ class ResponseGenerator:
             r"my (?:friend|buddy|pal|dude) ([a-zA-Z0-9_\s]+)",
             r"my ([a-zA-Z0-9_\s]+)",  # General "my X" pattern
             r"([a-zA-Z0-9_\s]+) is (?:my|a) (?:friend|buddy|pal|dude)",
+            # New patterns for detecting questions about other users' states
+            r"how is ([a-zA-Z0-9_\s]+)(?:'s| feeling| doing)?",
+            r"what did ([a-zA-Z0-9_\s]+) say",
+            r"what is ([a-zA-Z0-9_\s]+) (?:talking|saying) about",
+            r"did ([a-zA-Z0-9_\s]+) mention",
+            r"how was ([a-zA-Z0-9_\s]+)'s day",
+            r"is ([a-zA-Z0-9_\s]+) (?:happy|sad|angry|upset|ok|okay)",
+            r"can you tell me about ([a-zA-Z0-9_\s]+)'s (?:day|feeling|mood|status)",
+            r"status of ([a-zA-Z0-9_\s]+)",
+            r"update on ([a-zA-Z0-9_\s]+)"
         ]
         
         # Look for pronoun references if we've recently discussed someone
@@ -254,6 +264,38 @@ class ResponseGenerator:
                             user_context += f" You somewhat trust {ref_display_name}."
                         else:
                             user_context += f" You are cautious around {ref_display_name}."
+                    
+                    # NEW: Add recent conversations from the referenced user
+                    # Extract key query terms from the current message to find relevant conversations
+                    query_terms = []
+                    
+                    # Extract potential query terms related to state/feeling/day
+                    state_patterns = [
+                        r"how (?:is|was) .*? (?:feeling|doing|day)",
+                        r"(?:status|update|mood) of",
+                        r"is .*? (?:happy|sad|angry|upset|ok|okay)"
+                    ]
+                    
+                    for pattern in state_patterns:
+                        if re.search(pattern, content, re.I):
+                            query_terms.extend(["day", "feeling", "mood", "status", "bad", "good", "happy", "sad"])
+                            break
+                    
+                    # Get specific query terms
+                    content_words = re.findall(r'\b[a-zA-Z]{4,}\b', content.lower())
+                    query_terms.extend([w for w in content_words if w not in ["what", "when", "where", "which", "about", "tell", "know"]])
+                    
+                    # Get recent/relevant conversations from the referenced user
+                    recent_convs = self.conversation_manager.get_other_user_conversation(ref_user_id, query_terms)
+                    
+                    if recent_convs:
+                        conv_text = "\n".join([
+                            f"{ref_display_name}: {msg['content']}" 
+                            for msg in recent_convs if not msg.get('from_bot', False)
+                        ])
+                        
+                        if conv_text:
+                            user_context += f"\n\nRecent relevant messages from {ref_display_name}:\n{conv_text}"
         
         # Get conversation history
         conversation_history = self.conversation_manager.get_conversation_history(user_id)
