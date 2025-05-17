@@ -30,7 +30,7 @@ class ResponseGenerator:
         """
         referenced_users = {}
         
-        # Simple pattern matching for common reference patterns
+        # Expanded pattern matching for common reference patterns
         reference_patterns = [
             r"who (?:is|are) ([a-zA-Z0-9_\s]+)\??",
             r"tell me about ([a-zA-Z0-9_\s]+)",
@@ -38,13 +38,32 @@ class ResponseGenerator:
             r"what do you know about ([a-zA-Z0-9_\s]+)",
             r"do you know ([a-zA-Z0-9_\s]+)",
             r"have you met ([a-zA-Z0-9_\s]+)",
-            r"remember ([a-zA-Z0-9_\s]+)\?"
+            r"remember ([a-zA-Z0-9_\s]+)\?",
+            r"what's ([a-zA-Z0-9_\s]+) like",
+            r"how's ([a-zA-Z0-9_\s]+)",
+            r"what ([a-zA-Z0-9_\s]+) user",
+            r"who's ([a-zA-Z0-9_\s]+)",
+            r"my (?:friend|buddy|pal|dude) ([a-zA-Z0-9_\s]+)",
+            r"my ([a-zA-Z0-9_\s]+)",  # General "my X" pattern
+            r"([a-zA-Z0-9_\s]+) is (?:my|a) (?:friend|buddy|pal|dude)",
         ]
         
+        # Look for pronoun references if we've recently discussed someone
+        pronoun_patterns = [
+            r"(?:he|him|his|she|her|they|them|their)(?:\s+is|\s+are|\s+has|\s+have|\s+do|\s+does|\s+did|\s+'s|\s+'re)?"
+        ]
+        
+        # Process direct reference patterns
         for pattern in reference_patterns:
             matches = re.finditer(pattern, content, re.I)
             for match in matches:
                 referenced_name = match.group(1).strip()
+                
+                # Skip common words
+                if referenced_name.lower() in ["you", "me", "i", "we", "us", "them", 
+                                           "there", "here", "this", "that", "who", 
+                                           "what", "where", "when", "why", "how"]:
+                    continue
                 
                 # Check if this name refers to a known user
                 user_id, name_type = self.conversation_manager.get_user_by_name(referenced_name, current_user_id)
@@ -55,6 +74,37 @@ class ResponseGenerator:
                         "display_name": display_name,
                         "name_type": name_type
                     }
+        
+        # If no direct references found, check for pronouns and use most recently mentioned user
+        if not referenced_users:
+            for pattern in pronoun_patterns:
+                if re.search(pattern, content, re.I):
+                    # Find the most recently referenced user from conversation history
+                    if current_user_id in self.conversation_manager.conversations:
+                        # Go through the last few messages looking for a direct reference
+                        history = self.conversation_manager.conversations[current_user_id][-5:]
+                        for msg in reversed(history):
+                            if msg.get("from_bot", False):
+                                continue
+                            
+                            msg_content = msg.get("content", "")
+                            # Check this message for references
+                            for ref_pattern in reference_patterns:
+                                matches = re.finditer(ref_pattern, msg_content, re.I)
+                                for match in matches:
+                                    ref_name = match.group(1).strip()
+                                    user_id, name_type = self.conversation_manager.get_user_by_name(ref_name, current_user_id)
+                                    if user_id:
+                                        display_name = self.conversation_manager.get_display_name(user_id)
+                                        # Found a recent reference, use it for the pronoun
+                                        return {
+                                            "pronoun_reference": {
+                                                "user_id": user_id,
+                                                "display_name": display_name,
+                                                "name_type": name_type,
+                                                "original_reference": ref_name
+                                            }
+                                        }
         
         return referenced_users
         
@@ -82,7 +132,36 @@ class ResponseGenerator:
         
         # Add referenced user information if any
         if referenced_users:
+            # Handle pronoun references
+            if "pronoun_reference" in referenced_users:
+                ref_data = referenced_users["pronoun_reference"]
+                ref_user_id = ref_data["user_id"]
+                ref_display_name = ref_data["display_name"]
+                original_reference = ref_data.get("original_reference", "this person")
+                
+                if ref_user_id in self.conversation_manager.user_profiles:
+                    ref_profile = self.conversation_manager.user_profiles[ref_user_id]
+                    
+                    # Add information about the referenced user
+                    user_context += f"\n\n{current_user_name} is referring to {ref_display_name} with a pronoun. "
+                    user_context += f"You previously discussed {ref_display_name} who was referenced as '{original_reference}'. "
+                    user_context += f"Here's what you know about {ref_display_name}: {ref_profile.get_summary()}"
+                    
+                    # Add relationship context if available
+                    if ref_user_id in self.emotion_manager.user_emotions:
+                        ref_trust = self.emotion_manager.user_emotions[ref_user_id].get('trust', 0)
+                        if ref_trust > 7:
+                            user_context += f" You trust {ref_display_name} a lot."
+                        elif ref_trust > 4:
+                            user_context += f" You somewhat trust {ref_display_name}."
+                        else:
+                            user_context += f" You are cautious around {ref_display_name}."
+            
+            # Handle direct references
             for ref_name, ref_data in referenced_users.items():
+                if ref_name == "pronoun_reference":
+                    continue
+                    
                 ref_user_id = ref_data["user_id"]
                 ref_display_name = ref_data["display_name"]
                 
@@ -157,15 +236,234 @@ class ResponseGenerator:
     
     async def handle_first_message_of_day(self, message, user_id):
         """Handle the first message from a user on a new day"""
-        # Placeholder - this would be implemented with proper logic
-        pass
+        # Check if this is indeed the first message of the day
+        if user_id in self.emotion_manager.user_emotions:
+            emotions = self.emotion_manager.user_emotions[user_id]
+            last_interaction = emotions.get("last_interaction")
+            
+            if last_interaction:
+                try:
+                    last_time = datetime.fromisoformat(last_interaction)
+                    now = datetime.now(timezone.utc)
+                    
+                    # If last interaction was yesterday or earlier
+                    if last_time.date() < now.date():
+                        # Tailor greeting based on relationship
+                        trust = emotions.get("trust", 0)
+                        
+                        if trust > 7:
+                            greeting = random.choice([
+                                "... Welcome back.",
+                                "Good to see you again.",
+                                f"Hey {message.author.display_name}."
+                            ])
+                        elif trust > 4:
+                            greeting = random.choice([
+                                "... You're back.",
+                                f"Hello, {message.author.display_name}.",
+                                "Systems online."
+                            ])
+                        else:
+                            greeting = random.choice([
+                                "...",
+                                "Systems active.",
+                                "Sensors online."
+                            ])
+                            
+                        await message.channel.send(f"A2: {greeting}")
+                except Exception as e:
+                    print(f"Error in handle_first_message_of_day: {e}")
         
     async def check_inactive_users(self, bot, storage_manager):
-        """Check for users who haven't interacted recently"""
-        # Placeholder - this would be implemented with proper logic
-        pass
+        """Check for users who haven't interacted recently and send a message if they've been inactive"""
+        now = datetime.now(timezone.utc)
         
+        # Only process users who have DMs enabled
+        for user_id in self.emotion_manager.dm_enabled_users:
+            # Skip if user is not in emotions database
+            if user_id not in self.emotion_manager.user_emotions:
+                continue
+                
+            emotions = self.emotion_manager.user_emotions[user_id]
+            last_interaction = emotions.get("last_interaction")
+            
+            if not last_interaction:
+                continue
+                
+            try:
+                last_time = datetime.fromisoformat(last_interaction)
+                days_inactive = (now - last_time).days
+                
+                # Only send message for users inactive between 7-14 days
+                # And only if they have higher trust/attachment
+                if 7 <= days_inactive <= 14:
+                    trust = emotions.get("trust", 0)
+                    attachment = emotions.get("attachment", 0)
+                    
+                    # Only check in on users A2 has a relationship with
+                    if trust + attachment > 10:
+                        # Try to get the user object
+                        user = bot.get_user(user_id)
+                        if user:
+                            # Create a personalized message
+                            user_name = self.conversation_manager.get_display_name(user_id) or user.display_name
+                            
+                            message = random.choice([
+                                f"... {user_name}. It's been {days_inactive} days. Still operational?",
+                                f"Noticed your absence. Systems functioning?",
+                                f"... {days_inactive} days since last contact. Status check."
+                            ])
+                            
+                            try:
+                                # Send DM
+                                dm = await user.create_dm()
+                                await dm.send(f"A2: {message}")
+                                
+                                # Record this as an event
+                                event = {
+                                    "type": "absence_check",
+                                    "message": message,
+                                    "timestamp": now.isoformat(),
+                                    "effects": {}  # No direct effects
+                                }
+                                self.emotion_manager.user_events.setdefault(user_id, []).append(event)
+                                
+                                # Save the event
+                                await storage_manager.save_user_profile(user_id, self.emotion_manager)
+                            except Exception as e:
+                                print(f"Error sending DM to {user_id}: {e}")
+            except Exception as e:
+                print(f"Error checking inactive user {user_id}: {e}")
+                
     async def trigger_random_events(self, bot, storage_manager):
         """Trigger random emotional events for users"""
-        # Placeholder - this would be implemented with proper logic
-        pass
+        from config import EMOTION_CONFIG
+        
+        # Get config settings
+        event_chance = EMOTION_CONFIG.get("RANDOM_EVENT_CHANCE", 0.08)  # 8% chance by default
+        cooldown_hours = EMOTION_CONFIG.get("EVENT_COOLDOWN_HOURS", 12)
+        
+        now = datetime.now(timezone.utc)
+        
+        # Define possible random events
+        events = [
+            {
+                "type": "system_glitch",
+                "messages": [
+                    "System error detected. Running diagnostics... Trust parameters fluctuating.",
+                    "... Memory corruption detected. Scanning for damage.",
+                    "Warning: Emotional regulation subsystem malfunction."
+                ],
+                "effects": {"trust": -0.3, "affection_points": -5},
+                "min_relationship": 0  # Can happen at any relationship level
+            },
+            {
+                "type": "memory_resurface",
+                "messages": [
+                    "... A memory fragment surfaced. You remind me of someone I once knew.",
+                    "I remembered something about... a flower? Strange.",
+                    "Had a memory glitch. For a moment I thought... nevermind."
+                ],
+                "effects": {"attachment": +0.5, "trust": +0.2},
+                "min_relationship": 20  # Requires some established relationship
+            },
+            {
+                "type": "defensive_surge",
+                "messages": [
+                    "Warning: Defense protocols activating. Stand back.",
+                    "... Detecting possible threat. Combat systems engaging.",
+                    "Something's wrong. Systems going into defense mode."
+                ],
+                "effects": {"protectiveness": -0.5, "resentment": +0.3},
+                "min_relationship": 10
+            },
+            {
+                "type": "trust_breakthrough",
+                "messages": [
+                    "... I'm beginning to think you might not be so bad after all.",
+                    "I've been analyzing our interactions. You're... different.",
+                    "Maybe humans aren't all what I thought they were."
+                ],
+                "effects": {"trust": +0.7, "attachment": +0.4},
+                "min_relationship": 30  # Only happens with decent relationship
+            },
+            {
+                "type": "vulnerability_moment",
+                "messages": [
+                    "Sometimes I wonder... what happens when an android has no purpose left.",
+                    "Do you ever think about what happens after everything ends?",
+                    "... If my memory gets wiped, would anything about me really remain?"
+                ],
+                "effects": {"attachment": +0.8, "affection_points": +15},
+                "min_relationship": 40  # Only with high trust/attachment
+            }
+        ]
+        
+        # Only process users who have DMs enabled
+        for user_id in self.emotion_manager.dm_enabled_users:
+            # Skip if user is not in emotions database
+            if user_id not in self.emotion_manager.user_emotions:
+                continue
+                
+            emotions = self.emotion_manager.user_emotions[user_id]
+            
+            # Check if event is on cooldown
+            last_event_time = None
+            if user_id in self.emotion_manager.user_events and self.emotion_manager.user_events[user_id]:
+                # Find the most recent event
+                last_event = max(self.emotion_manager.user_events[user_id], 
+                                key=lambda e: datetime.fromisoformat(e["timestamp"]))
+                last_event_time = datetime.fromisoformat(last_event["timestamp"])
+            
+            # Check cooldown
+            if last_event_time and (now - last_event_time).total_seconds() < cooldown_hours * 3600:
+                continue
+                
+            # Calculate relationship score for eligibility
+            relationship_score = self.emotion_manager.get_relationship_score(user_id)
+            
+            # Roll for event chance
+            if random.random() < event_chance:
+                # Filter eligible events based on relationship score
+                eligible_events = [e for e in events if relationship_score >= e["min_relationship"]]
+                
+                if eligible_events:
+                    # Select random event
+                    event = random.choice(eligible_events)
+                    message = random.choice(event["messages"])
+                    
+                    # Apply effects
+                    e = emotions
+                    for stat, change in event["effects"].items():
+                        if stat == "affection_points":
+                            e[stat] = max(-100, min(1000, e.get(stat, 0) + change))
+                        else:
+                            e[stat] = max(0, min(10, e.get(stat, 0) + change))
+                    
+                    # Record the event
+                    event_record = {
+                        "type": event["type"],
+                        "message": message,
+                        "timestamp": now.isoformat(),
+                        "effects": event["effects"]
+                    }
+                    self.emotion_manager.user_events.setdefault(user_id, []).append(event_record)
+                    
+                    # Create a memory of this event
+                    await self.emotion_manager.create_memory_event(
+                        user_id, event["type"], 
+                        f"A2 experienced a {event['type'].replace('_', ' ')}. {message}",
+                        event["effects"], storage_manager
+                    )
+                    
+                    # Try to send a DM to the user
+                    try:
+                        user = bot.get_user(user_id)
+                        if user:
+                            dm = await user.create_dm()
+                            await dm.send(f"A2: {message}")
+                    except Exception as e:
+                        print(f"Error sending event DM to {user_id}: {e}")
+                    
+                    # Save changes
+                    await storage_manager.save_data(self.emotion_manager, None)
