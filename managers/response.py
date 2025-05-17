@@ -650,3 +650,252 @@ class ResponseGenerator:
                         await message.channel.send(f"A2: {greeting}{topic_reference}")
                 except Exception as e:
                     print(f"Error in handle_first_message_of_day: {e}")
+
+    async def check_inactive_users(self, bot, storage_manager):
+        """Check for inactive users and potentially reach out"""
+        self.logger.debug("Checking for inactive users")
+        
+        # Get current time
+        now = datetime.now(timezone.utc)
+        
+        # Find users who haven't interacted recently but have DMs enabled
+        for user_id, emotions in self.emotion_manager.user_emotions.items():
+            # Skip if no last interaction
+            if 'last_interaction' not in emotions:
+                continue
+                
+            # Parse the last interaction time
+            try:
+                last_interaction = datetime.fromisoformat(emotions['last_interaction'])
+            except (ValueError, TypeError):
+                continue
+                
+            # Calculate days since last interaction
+            days_since = (now - last_interaction).days
+            
+            # Only process users who haven't interacted for 10-30 days
+            # and have DMs enabled and decent trust
+            if (10 <= days_since <= 30 and 
+                user_id in self.emotion_manager.dm_enabled_users and
+                emotions.get('trust', 0) >= 4):
+                
+                # Low chance to reach out (5% daily)
+                if random.random() < 0.05:
+                    self.logger.info(f"Attempting to reach out to inactive user {user_id}")
+                    
+                    # Get the user
+                    user = bot.get_user(user_id)
+                    if not user:
+                        continue
+                        
+                    # Create a message based on trust level
+                    trust = emotions.get('trust', 0)
+                    
+                    if trust > 7:
+                        message = random.choice([
+                            "... Haven't seen you in a while. Still operational?",
+                            "Checking in. Status update?",
+                            "... Starting to think you got yourself into trouble."
+                        ])
+                    else:
+                        message = random.choice([
+                            "...",
+                            "Systems still operational.",
+                            "Running routine check."
+                        ])
+                    
+                    # Try to send a DM
+                    try:
+                        dm = await user.create_dm()
+                        await dm.send(f"A2: {message}")
+                        
+                        # Add this user to pending message list
+                        self.emotion_manager.pending_messages.add(user_id)
+                        
+                        # Record this outreach
+                        await self.emotion_manager.create_memory_event(
+                            user_id, 
+                            "inactive_outreach",
+                            f"A2 reached out to {user.display_name} after {days_since} days of inactivity.",
+                            {"attachment": 0.1},
+                            storage_manager
+                        )
+                        
+                        self.logger.info(f"Successfully reached out to inactive user {user_id}")
+                    except Exception as e:
+                        self.logger.error(f"Error sending DM to inactive user {user_id}: {e}")
+        
+        self.logger.debug("Inactive users check completed")
+
+    async def trigger_random_events(self, bot, storage_manager):
+        """Trigger random events for active users"""
+        self.logger.debug("Checking for random event triggers")
+        
+        # Get event configuration from constants
+        from config import EMOTION_CONFIG
+        event_chance = EMOTION_CONFIG.get("RANDOM_EVENT_CHANCE", 0.08)
+        event_cooldown = EMOTION_CONFIG.get("EVENT_COOLDOWN_HOURS", 12)
+        
+        # Get active users
+        now = datetime.now(timezone.utc)
+        active_users = []
+        
+        # Find users who:
+        # 1. Have interacted recently
+        # 2. Have DMs enabled
+        # 3. Haven't had an event recently
+        for user_id, emotions in self.emotion_manager.user_emotions.items():
+            # Skip if no last interaction
+            if 'last_interaction' not in emotions:
+                continue
+                
+            # Parse the last interaction time
+            try:
+                last_interaction = datetime.fromisoformat(emotions['last_interaction'])
+            except (ValueError, TypeError):
+                continue
+                
+            # Skip if not active in the last 7 days
+            days_since_activity = (now - last_interaction).days
+            if days_since_activity > 7:
+                continue
+                
+            # Skip if DMs not enabled
+            if user_id not in self.emotion_manager.dm_enabled_users:
+                continue
+                
+            # Check if there was a recent event
+            had_recent_event = False
+            if user_id in self.emotion_manager.user_events:
+                for event in self.emotion_manager.user_events[user_id]:
+                    try:
+                        event_time = datetime.fromisoformat(event.get('timestamp', ''))
+                        hours_since_event = (now - event_time).total_seconds() / 3600
+                        if hours_since_event < event_cooldown:
+                            had_recent_event = True
+                            break
+                    except (ValueError, TypeError):
+                        pass
+                        
+            if had_recent_event:
+                continue
+                
+            # Add to active users
+            active_users.append((user_id, emotions))
+        
+        if not active_users:
+            self.logger.debug("No eligible users for random events")
+            return
+        
+        self.logger.info(f"Found {len(active_users)} users eligible for random events")
+        
+        # For each active user, roll a chance
+        for user_id, emotions in active_users:
+            if random.random() < event_chance:
+                # Trigger an event!
+                self.logger.info(f"Triggering random event for user {user_id}")
+                
+                # Build event based on relationship
+                trust = emotions.get('trust', 0)
+                events = []
+                
+                # Low trust events
+                if trust < 3:
+                    events.extend([
+                        {
+                            "type": "defensive_reaction",
+                            "message": "... Stay back. Motion sensors triggered.",
+                            "effects": {"resentment": 0.1, "protectiveness": -0.1}
+                        },
+                        {
+                            "type": "system_glitch",
+                            "message": "Error... system... recalibrating...",
+                            "effects": {"trust": -0.1}
+                        }
+                    ])
+                
+                # Medium trust events
+                elif trust < 6:
+                    events.extend([
+                        {
+                            "type": "memory_fragment",
+                            "message": "I... remember something. The desert. It was... Never mind.",
+                            "effects": {"attachment": 0.2, "trust": 0.1}
+                        },
+                        {
+                            "type": "tactical_alert",
+                            "message": "Stay alert. Something's not right here.",
+                            "effects": {"protectiveness": 0.2, "affection_points": 5}
+                        }
+                    ])
+                
+                # High trust events
+                else:
+                    events.extend([
+                        {
+                            "type": "protective_instinct",
+                            "message": "... I sensed something. Stay close.",
+                            "effects": {"protectiveness": 0.3, "trust": 0.1, "affection_points": 10}
+                        },
+                        {
+                            "type": "vulnerability_moment",
+                            "message": "Do you ever wonder... what happens when this is all over?",
+                            "effects": {"attachment": 0.3, "trust": 0.2, "affection_points": 15}
+                        }
+                    ])
+                
+                # Special rare events
+                if random.random() < 0.1:  # 10% chance for a rare event
+                    events.append({
+                        "type": "deep_memory",
+                        "message": "I had a dream. I was... human. It felt... real.",
+                        "effects": {"attachment": 0.5, "trust": 0.3, "affection_points": 20}
+                    })
+                
+                # Select a random event from the eligible ones
+                if not events:
+                    continue
+                    
+                event = random.choice(events)
+                
+                # Record the event
+                timestamp = datetime.now(timezone.utc).isoformat()
+                event_record = {
+                    "type": event["type"],
+                    "message": event["message"],
+                    "timestamp": timestamp,
+                    "effects": event["effects"]
+                }
+                
+                # Add to user events
+                self.emotion_manager.user_events.setdefault(user_id, []).append(event_record)
+                
+                # Update emotional stats
+                for stat, change in event["effects"].items():
+                    if stat == "affection_points":
+                        emotions[stat] = max(-100, min(1000, emotions.get(stat, 0) + change))
+                    else:
+                        emotions[stat] = max(0, min(10, emotions.get(stat, 0) + change))
+                
+                # Create a memory for this event
+                await self.emotion_manager.create_memory_event(
+                    user_id,
+                    event["type"],
+                    f"A2 experienced a random {event['type'].replace('_', ' ')} event: {event['message']}",
+                    event["effects"],
+                    storage_manager
+                )
+                
+                # Try to send a DM to the user
+                try:
+                    user = bot.get_user(user_id)
+                    if user:
+                        dm = await user.create_dm()
+                        await dm.send(f"A2: {event['message']}")
+                        self.logger.info(f"Sent random event DM to user {user_id}")
+                except Exception as e:
+                    self.logger.error(f"Error sending DM to user {user_id}: {e}")
+        
+        # Save changes
+        await storage_manager.save_data(self.emotion_manager)
+        self.logger.debug("Random events check completed")
