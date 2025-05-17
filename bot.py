@@ -47,7 +47,7 @@ from config import (
 class A2Bot:
     """Main A2 bot implementation handling commands and event loops"""
     
-    def __init__(self, token, app_id, openai_api_key, openai_org_id="", openai_project_id=""):
+    def __init__(self, token, app_id, openai_api_key, openai_org_id="", openai_project_id="", storage_manager=None):
         # Get logger
         self.logger = get_logger()
         
@@ -76,8 +76,13 @@ class A2Bot:
         self.bot.PERSONALITY_STATES = PERSONALITY_STATES
         
         # Initialize managers
-        self.storage_manager = StorageManager(DATA_DIR, USERS_DIR, PROFILES_DIR, DM_SETTINGS_FILE, 
-                                             USER_PROFILES_DIR, CONVERSATIONS_DIR)
+        # Use provided storage manager or create default one
+        if storage_manager:
+            self.storage_manager = storage_manager
+        else:
+            self.storage_manager = StorageManager(DATA_DIR, USERS_DIR, PROFILES_DIR, DM_SETTINGS_FILE, 
+                                                USER_PROFILES_DIR, CONVERSATIONS_DIR)
+        
         self.emotion_manager = EmotionManager()
         self.conversation_manager = ConversationManager()
         self.response_generator = ResponseGenerator(
@@ -112,14 +117,22 @@ class A2Bot:
             self.logger.info(f"Serving {sum(len(g.members) for g in self.bot.guilds)} users")
             
             # Debug data directories
-            self.logger.info(f"Checking data directory: {DATA_DIR}")
-            self.logger.info(f"Directory exists: {DATA_DIR.exists()}")
-            self.logger.info(f"Profile directory: {PROFILES_DIR}")
-            self.logger.info(f"Directory exists: {PROFILES_DIR.exists()}")
+            self.logger.info(f"Using storage manager: {self.storage_manager.__class__.__name__}")
             
-            # Check for existing profile files
-            profile_files = list(PROFILES_DIR.glob("*.json"))
-            self.logger.info(f"Found {len(profile_files)} profile files")
+            if hasattr(self.storage_manager, 'verify_database_connection'):
+                # PostgreSQL storage
+                db_conn_ok = await self.storage_manager.verify_database_connection()
+                self.logger.info(f"Database connection verified: {db_conn_ok}")
+            elif hasattr(self.storage_manager, 'verify_data_directories'):
+                # File-based storage
+                self.logger.info(f"Checking data directory: {DATA_DIR}")
+                self.logger.info(f"Directory exists: {DATA_DIR.exists()}")
+                self.logger.info(f"Profile directory: {PROFILES_DIR}")
+                self.logger.info(f"Directory exists: {PROFILES_DIR.exists()}")
+                
+                # Check for existing profile files
+                profile_files = list(PROFILES_DIR.glob("*.json"))
+                self.logger.info(f"Found {len(profile_files)} profile files")
             
             # Load all data
             await self.storage_manager.load_data(self.emotion_manager, self.conversation_manager)
