@@ -128,8 +128,10 @@ class EmotionManager:
         if next_stage:
             current_threshold = current_stage["threshold"]
             next_threshold = next_stage["threshold"]
-            progress = ((score - current_threshold) / (next_threshold - current_threshold)) * 100
-            progress = min(99.9, max(0, progress))  # Cap between 0-99.9%
+            # Check for division by zero
+            if next_threshold - current_threshold > 0:
+                progress = ((score - current_threshold) / (next_threshold - current_threshold)) * 100
+                progress = min(99.9, max(0, progress))  # Cap between 0-99.9%
         
         return {
             "score": score,
