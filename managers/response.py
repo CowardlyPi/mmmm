@@ -1,11 +1,11 @@
 """
-Response generator for the A2 Discord bot.
+Enhanced response generator for the A2 Discord bot.
 """
 import random
 import asyncio
 import re
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from collections import deque
 
 class ResponseGenerator:
@@ -18,9 +18,10 @@ class ResponseGenerator:
         self.recent_responses = {}
         self.MAX_RECENT_RESPONSES = 10
         self.user_references = {}  # Store verified user references
+        self.topic_memory = {}  # Remember topics for later reference
     
     def identify_user_references(self, content, current_user_id):
-        """Identify references to other users in the message content
+        """Identify references to other users in the message content with enhanced detection
         
         Args:
             content (str): The message content
@@ -55,8 +56,9 @@ class ResponseGenerator:
                     }
             return {}  # No matching user found
         
-        # Expanded pattern matching for common reference patterns
+        # Use an expanded set of patterns to identify references to other users
         reference_patterns = [
+            # Basic questions about others
             r"who (?:is|are) ([a-zA-Z0-9_\s]+)\??",
             r"tell me about ([a-zA-Z0-9_\s]+)",
             r"([a-zA-Z0-9_\s]+)'s profile",
@@ -68,10 +70,13 @@ class ResponseGenerator:
             r"how's ([a-zA-Z0-9_\s]+)",
             r"what ([a-zA-Z0-9_\s]+) user",
             r"who's ([a-zA-Z0-9_\s]+)",
+            
+            # Relational references
             r"my (?:friend|buddy|pal|dude) ([a-zA-Z0-9_\s]+)",
             r"my ([a-zA-Z0-9_\s]+)",  # General "my X" pattern
             r"([a-zA-Z0-9_\s]+) is (?:my|a) (?:friend|buddy|pal|dude)",
-            # New patterns for detecting questions about other users' states
+            
+            # Questions about state/status
             r"how is ([a-zA-Z0-9_\s]+)(?:'s| feeling| doing)?",
             r"what did ([a-zA-Z0-9_\s]+) say",
             r"what is ([a-zA-Z0-9_\s]+) (?:talking|saying) about",
@@ -80,7 +85,20 @@ class ResponseGenerator:
             r"is ([a-zA-Z0-9_\s]+) (?:happy|sad|angry|upset|ok|okay)",
             r"can you tell me about ([a-zA-Z0-9_\s]+)'s (?:day|feeling|mood|status)",
             r"status of ([a-zA-Z0-9_\s]+)",
-            r"update on ([a-zA-Z0-9_\s]+)"
+            r"update on ([a-zA-Z0-9_\s]+)",
+            
+            # NEW: Explicit cross-referencing patterns
+            r"what does ([a-zA-Z0-9_\s]+) think about ([a-zA-Z0-9_\s]+)",
+            r"has ([a-zA-Z0-9_\s]+) talked about ([a-zA-Z0-9_\s]+)",
+            r"when did ([a-zA-Z0-9_\s]+) last mention ([a-zA-Z0-9_\s]+)",
+            r"what topics has ([a-zA-Z0-9_\s]+) discussed",
+            r"anything in common with ([a-zA-Z0-9_\s]+)",
+            r"compare me (?:to|and|with) ([a-zA-Z0-9_\s]+)",
+            r"similarities between me and ([a-zA-Z0-9_\s]+)",
+            r"do I talk like ([a-zA-Z0-9_\s]+)",
+            r"does ([a-zA-Z0-9_\s]+) talk like me",
+            r"introduce me to ([a-zA-Z0-9_\s]+)",
+            r"find users who talk about ([a-zA-Z0-9_\s]+)"
         ]
         
         # Look for pronoun references if we've recently discussed someone
@@ -95,9 +113,9 @@ class ResponseGenerator:
                 referenced_name = match.group(1).strip()
                 
                 # Skip common words
-                if referenced_name.lower() in ["you", "me", "i", "we", "us", "them", 
+                if referenced_name.lower() in {"you", "me", "i", "we", "us", "them", 
                                            "there", "here", "this", "that", "who", 
-                                           "what", "where", "when", "why", "how"]:
+                                           "what", "where", "when", "why", "how"}:
                     continue
                 
                 # Check if this name refers to a known user
@@ -107,7 +125,26 @@ class ResponseGenerator:
                     referenced_users[referenced_name] = {
                         "user_id": user_id,
                         "display_name": display_name,
-                        "name_type": name_type
+                        "name_type": name_type,
+                        # Add relationship info between users if available
+                        "relationship": self.get_relationship_info(current_user_id, user_id)
+                    }
+        
+        # Check for topic comparison patterns (new)
+        topic_patterns = [
+            r"has anyone (?:talked|spoken|discussed|mentioned) about ([a-zA-Z0-9_\s]+)",
+            r"who (?:else |)(?:talks|speaks|discusse?s?|mentions) ([a-zA-Z0-9_\s]+)",
+            r"find conversations about ([a-zA-Z0-9_\s]+)"
+        ]
+        
+        for pattern in topic_patterns:
+            matches = re.finditer(pattern, content, re.I)
+            for match in matches:
+                topic = match.group(1).strip().lower()
+                if len(topic) >= 3 and topic not in {"about", "with", "these", "those", "them"}:
+                    referenced_users["topic_search"] = {
+                        "topic": topic,
+                        "context": content
                     }
         
         # If no direct references found, check for pronouns and use most recently mentioned user
@@ -117,7 +154,7 @@ class ResponseGenerator:
                     # Find the most recently referenced user from conversation history
                     if current_user_id in self.conversation_manager.conversations:
                         # Go through the last few messages looking for a direct reference
-                        history = self.conversation_manager.conversations[current_user_id][-5:]
+                        history = self.conversation_manager.conversations[current_user_id][-8:]  # Increased from 5
                         for msg in reversed(history):
                             if msg.get("from_bot", False):
                                 continue
@@ -137,11 +174,50 @@ class ResponseGenerator:
                                                 "user_id": user_id,
                                                 "display_name": display_name,
                                                 "name_type": name_type,
-                                                "original_reference": ref_name
+                                                "original_reference": ref_name,
+                                                "relationship": self.get_relationship_info(current_user_id, user_id)
                                             }
                                         }
         
         return referenced_users
+    
+    def get_relationship_info(self, user_id1, user_id2):
+        """Get information about the relationship between two users
+        
+        Args:
+            user_id1 (int): First user's ID
+            user_id2 (int): Second user's ID
+            
+        Returns:
+            dict: Information about the relationship
+        """
+        relationship = {}
+        
+        # Check if both users exist
+        if user_id1 not in self.emotion_manager.user_emotions or user_id2 not in self.emotion_manager.user_emotions:
+            return relationship
+        
+        # Find common topics
+        common_topics = []
+        if hasattr(self.conversation_manager, 'find_common_topics'):
+            common_topics = self.conversation_manager.find_common_topics(user_id1, user_id2)
+            if common_topics:
+                relationship["common_topics"] = common_topics[:3]
+                
+        # Check if they've mentioned each other
+        if hasattr(self.conversation_manager, 'cross_references'):
+            if user_id2 in self.conversation_manager.cross_references.get(user_id1, set()):
+                relationship["user1_has_mentioned_user2"] = True
+            if user_id1 in self.conversation_manager.cross_references.get(user_id2, set()):
+                relationship["user2_has_mentioned_user1"] = True
+        
+        # Calculate similarity if available
+        if hasattr(self.conversation_manager, 'get_topic_similarity'):
+            similarity = self.conversation_manager.get_topic_similarity(user_id1, user_id2)
+            if similarity > 0:
+                relationship["topic_similarity"] = similarity
+        
+        return relationship
     
     def extract_conversation_context(self, user_id, current_message):
         """Extract relevant conversation context to provide better responses
@@ -156,33 +232,60 @@ class ResponseGenerator:
         if user_id not in self.conversation_manager.conversations:
             return ""
             
-        # Get last few messages
-        history = self.conversation_manager.conversations[user_id][-10:]  # Last 10 messages
+        # Get last several messages
+        history = self.conversation_manager.conversations[user_id][-15:]  # Increased from 10
         
         # Look for relevant topics in current message
         topics = set()
-        important_words = re.findall(r'\b[a-zA-Z]{4,}\b', current_message.lower())
-        topics.update(important_words)
+        
+        # Try to use the conversation manager's topic extraction if available
+        if hasattr(self.conversation_manager, '_extract_topics'):
+            extracted_topics = self.conversation_manager._extract_topics(current_message)
+            topics.update(extracted_topics)
+        else:
+            # Fallback: simple word extraction
+            important_words = re.findall(r'\b[a-zA-Z]{4,}\b', current_message.lower())
+            topics.update(important_words)
         
         # Remove common words
         common_words = {"what", "when", "where", "which", "have", "about", "that", "this", "know", "help"}
         topics = topics - common_words
         
+        # Remember these topics for future reference
+        self.topic_memory[user_id] = list(topics)
+        
         # Find relevant messages
         relevant_messages = []
-        for msg in history:
-            msg_content = msg.get("content", "").lower()
-            if any(topic in msg_content for topic in topics):
-                speaker = "A2" if msg.get("from_bot", False) else "User"
-                relevant_messages.append(f"{speaker}: {msg.get('content', '')}")
+        
+        # Try to use the enhanced search method if available
+        if hasattr(self.conversation_manager, 'search_conversations') and topics:
+            # Search for each topic
+            for topic in topics:
+                results = self.conversation_manager.search_conversations(topic, user_id=user_id, max_results=3)
+                for result in results:
+                    message = result["message"]
+                    speaker = "A2" if message.get("from_bot", False) else "User"
+                    msg_text = f"{speaker}: {message.get('content', '')}"
+                    if msg_text not in relevant_messages:  # Avoid duplicates
+                        relevant_messages.append(msg_text)
+        else:
+            # Fallback: linear search through history
+            for msg in history:
+                msg_content = msg.get("content", "").lower()
+                if any(topic in msg_content for topic in topics):
+                    speaker = "A2" if msg.get("from_bot", False) else "User"
+                    relevant_messages.append(f"{speaker}: {msg.get('content', '')}")
         
         if not relevant_messages:
             return ""
             
-        return "\nRelevant conversation history:\n" + "\n".join(relevant_messages[-5:])
+        # Limit to a reasonable amount
+        relevant_messages = relevant_messages[-7:]  # Increased from 5
+        
+        return "\nRelevant conversation history:\n" + "\n".join(relevant_messages)
         
     async def generate_a2_response(self, content, trust, user_id, storage_manager):
-        """Generate A2's response to a user message"""
+        """Generate A2's response to a user message with enhanced context awareness"""
         # Identify any referenced users
         referenced_users = self.identify_user_references(content, user_id)
         
@@ -193,15 +296,36 @@ class ResponseGenerator:
         # Build prompt for OpenAI
         system_prompt = "You are A2, a combat android from NieR: Automata. You speak in short, clipped sentences, often sarcastic but occasionally showing glimpses of deeper emotion. Keep responses brief and true to character."
         
-        # Add user context
+        # Add user context with enhanced profile information
         user_context = f"You are speaking to {current_user_name}. "
         
+        # Add trust level context
         if trust > 7:
             user_context += f"You trust {current_user_name} a lot. "
         elif trust > 4:
             user_context += f"You somewhat trust {current_user_name}. "
         else:
             user_context += f"You are cautious around {current_user_name}. "
+        
+        # Add enhanced profile information if available
+        if hasattr(current_user_profile, 'communication_style') and current_user_profile.communication_style:
+            user_context += f"\n\n{current_user_name}'s communication style: {', '.join(current_user_profile.communication_style)}. "
+            
+        if hasattr(current_user_profile, 'languages') and current_user_profile.languages:
+            user_context += f"{current_user_name} speaks: {', '.join(current_user_profile.languages)}. "
+            
+        if hasattr(current_user_profile, 'frequent_topics') and current_user_profile.frequent_topics:
+            # Get top 3 topics
+            top_topics = sorted(current_user_profile.frequent_topics.items(), key=lambda x: x[1], reverse=True)[:3]
+            if top_topics:
+                topics_str = ', '.join(topic for topic, _ in top_topics)
+                user_context += f"{current_user_name} frequently discusses: {topics_str}. "
+                
+        # Add information about recent emotional trends if available
+        if hasattr(current_user_profile, 'analyze_sentiment_trend'):
+            sentiment_info = current_user_profile.analyze_sentiment_trend()
+            if sentiment_info and sentiment_info != "Not enough data to determine sentiment trend.":
+                user_context += f"Recently, {current_user_name}'s conversations have shown {sentiment_info} "
         
         # Handle question about user relationship
         if "question_about_relationship" in referenced_users:
@@ -212,8 +336,35 @@ class ResponseGenerator:
             user_context += f"\n\n{current_user_name} is asking if '{ref_name}' is their 'dude' or friend. "
             user_context += f"You DON'T know if this is true, since you don't track friendships between users. "
             user_context += f"You should respond neutrally without confirming or denying their friendship status."
-        
-        # Add referenced user information if any
+            
+        # Handle topic search
+        elif "topic_search" in referenced_users:
+            topic_data = referenced_users["topic_search"]
+            topic = topic_data["topic"]
+            
+            # Use the enhanced conversation search if available
+            topic_info = ""
+            if hasattr(self.conversation_manager, 'get_conversations_by_topic'):
+                # Search for conversations about this topic
+                conversations = self.conversation_manager.get_conversations_by_topic(topic, max_results=3)
+                if conversations:
+                    # Format the information
+                    for i, conv in enumerate(conversations):
+                        other_user_id = conv["user_id"]
+                        other_profile = self.conversation_manager.get_or_create_profile(other_user_id)
+                        other_name = other_profile.get_display_name() if hasattr(other_profile, 'get_display_name') else "Unknown User"
+                        
+                        message = conv["message"]
+                        preview = message.get("content", "")[:50] + ("..." if len(message.get("content", "")) > 50 else "")
+                        
+                        topic_info += f"\n- {other_name} mentioned '{topic}': \"{preview}\""
+                
+                if topic_info:
+                    user_context += f"\n\n{current_user_name} is asking about who has discussed the topic '{topic}'. Here are some mentions:{topic_info}"
+                else:
+                    user_context += f"\n\n{current_user_name} is asking about who has discussed the topic '{topic}', but no one has mentioned this specific topic."
+            
+        # Handle direct references or pronoun references
         elif referenced_users:
             # Handle pronoun references
             if "pronoun_reference" in referenced_users:
@@ -225,10 +376,17 @@ class ResponseGenerator:
                 if ref_user_id in self.conversation_manager.user_profiles:
                     ref_profile = self.conversation_manager.user_profiles[ref_user_id]
                     
+                    # Get a more detailed summary if the enhanced profile is available
+                    profile_summary = ""
+                    if hasattr(ref_profile, 'get_detailed_summary'):
+                        profile_summary = f"Detailed information:\n{ref_profile.get_summary()}"
+                    else:
+                        profile_summary = ref_profile.get_summary()
+                    
                     # Add information about the referenced user
                     user_context += f"\n\n{current_user_name} is referring to {ref_display_name} with a pronoun. "
                     user_context += f"You previously discussed {ref_display_name} who was referenced as '{original_reference}'. "
-                    user_context += f"Here's what you know about {ref_display_name}: {ref_profile.get_summary()}"
+                    user_context += f"Here's what you know about {ref_display_name}: {profile_summary}"
                     
                     # Add relationship context if available
                     if ref_user_id in self.emotion_manager.user_emotions:
@@ -239,10 +397,22 @@ class ResponseGenerator:
                             user_context += f" You somewhat trust {ref_display_name}."
                         else:
                             user_context += f" You are cautious around {ref_display_name}."
+                    
+                    # Add relationship info between users if available
+                    relationship = ref_data.get("relationship", {})
+                    if relationship:
+                        if "common_topics" in relationship:
+                            user_context += f" {current_user_name} and {ref_display_name} have discussed similar topics: {', '.join(relationship['common_topics'])}."
+                        
+                        if relationship.get("user1_has_mentioned_user2"):
+                            user_context += f" {current_user_name} has mentioned {ref_display_name} before."
+                        
+                        if relationship.get("user2_has_mentioned_user1"):
+                            user_context += f" {ref_display_name} has mentioned {current_user_name} before."
             
             # Handle direct references
             for ref_name, ref_data in referenced_users.items():
-                if ref_name == "pronoun_reference":
+                if ref_name in {"pronoun_reference", "topic_search", "question_about_relationship"}:
                     continue
                     
                 ref_user_id = ref_data["user_id"]
@@ -251,9 +421,16 @@ class ResponseGenerator:
                 if ref_user_id in self.conversation_manager.user_profiles:
                     ref_profile = self.conversation_manager.user_profiles[ref_user_id]
                     
+                    # Get more detailed profile information if available
+                    profile_summary = ""
+                    if hasattr(ref_profile, 'get_detailed_summary'):
+                        profile_summary = f"Detailed information:\n{ref_profile.get_summary()}"
+                    else:
+                        profile_summary = ref_profile.get_summary()
+                    
                     # Add information about the referenced user
                     user_context += f"\n\n{current_user_name} is asking about '{ref_name}', which refers to {ref_display_name}. "
-                    user_context += f"Here's what you know about {ref_display_name}: {ref_profile.get_summary()}"
+                    user_context += f"Here's what you know about {ref_display_name}: {profile_summary}"
                     
                     # Add relationship context if available
                     if ref_user_id in self.emotion_manager.user_emotions:
@@ -265,8 +442,19 @@ class ResponseGenerator:
                         else:
                             user_context += f" You are cautious around {ref_display_name}."
                     
-                    # NEW: Add recent conversations from the referenced user
-                    # Extract key query terms from the current message to find relevant conversations
+                    # Add relationship between users if available
+                    relationship = ref_data.get("relationship", {})
+                    if relationship:
+                        if "common_topics" in relationship:
+                            user_context += f" {current_user_name} and {ref_display_name} have discussed similar topics: {', '.join(relationship['common_topics'])}."
+                        
+                        if relationship.get("user1_has_mentioned_user2"):
+                            user_context += f" {current_user_name} has mentioned {ref_display_name} before."
+                        
+                        if relationship.get("user2_has_mentioned_user1"):
+                            user_context += f" {ref_display_name} has mentioned {current_user_name} before."
+                    
+                    # Add recent conversations from the referenced user
                     query_terms = []
                     
                     # Extract potential query terms related to state/feeling/day
@@ -281,12 +469,22 @@ class ResponseGenerator:
                             query_terms.extend(["day", "feeling", "mood", "status", "bad", "good", "happy", "sad"])
                             break
                     
-                    # Get specific query terms
+                    # Get specific query terms from current message
                     content_words = re.findall(r'\b[a-zA-Z]{4,}\b', content.lower())
-                    query_terms.extend([w for w in content_words if w not in ["what", "when", "where", "which", "about", "tell", "know"]])
+                    query_terms.extend([w for w in content_words if w not in {"what", "when", "where", "which", "about", "tell", "know"}])
                     
-                    # Get recent/relevant conversations from the referenced user
-                    recent_convs = self.conversation_manager.get_other_user_conversation(ref_user_id, query_terms)
+                    # Use conversation search if available
+                    recent_convs = []
+                    if hasattr(self.conversation_manager, 'search_conversations') and query_terms:
+                        # Search for each topic in the other user's conversations
+                        for term in query_terms:
+                            results = self.conversation_manager.search_conversations(term, user_id=ref_user_id, max_results=2)
+                            for result in results:
+                                if result["message"] not in recent_convs:  # Avoid duplicates
+                                    recent_convs.append(result["message"])
+                    else:
+                        # Fallback to simpler method
+                        recent_convs = self.conversation_manager.get_other_user_conversation(ref_user_id, query_terms)
                     
                     if recent_convs:
                         conv_text = "\n".join([
@@ -335,8 +533,51 @@ class ResponseGenerator:
             self.conversation_manager.add_message(user_id, content, is_from_bot=False)
             self.conversation_manager.add_message(user_id, a2_response, is_from_bot=True)
             
+            # Extract any cross-references from the user's message
+            if hasattr(self.conversation_manager, 'extract_cross_references'):
+                referenced_users = self.conversation_manager.extract_cross_references(user_id, content)
+            
             # Update user profile based on message content
             profile = self.conversation_manager.extract_profile_info(user_id, content)
+            
+            # Update sentiment history if the profile supports it
+            if hasattr(profile, 'add_sentiment_entry'):
+                # Simple sentiment analysis based on keywords (replace with a real model in production)
+                positive_words = {"like", "love", "good", "great", "awesome", "thanks", "appreciate", "helpful", "nice", "excellent"}
+                negative_words = {"hate", "dislike", "bad", "terrible", "awful", "annoying", "useless", "stupid", "broken", "wrong"}
+                
+                content_words = set(content.lower().split())
+                positive_matches = len(content_words.intersection(positive_words))
+                negative_matches = len(content_words.intersection(negative_words))
+                
+                sentiment_value = 0.5  # Neutral default
+                if positive_matches > negative_matches:
+                    sentiment_value = 0.7 + (0.3 * (positive_matches / (positive_matches + negative_matches + 1)))
+                elif negative_matches > 0:
+                    sentiment_value = 0.3 - (0.3 * (negative_matches / (positive_matches + negative_matches + 1)))
+                
+                profile.add_sentiment_entry(content, sentiment_value)
+            
+            # Update communication style based on message
+            if hasattr(profile, 'update_communication_style'):
+                # Detect formality level
+                if re.search(r'\b(hello|greetings|good [morning|afternoon|evening])\b', content.lower()):
+                    profile.update_communication_style("formal")
+                if re.search(r'\b(hey|hi|what\'s up|yo|sup)\b', content.lower()):
+                    profile.update_communication_style("casual")
+                
+                # Detect verbosity
+                if len(content.split()) > 50:
+                    profile.update_communication_style("verbose")
+                elif len(content.split()) < 10:
+                    profile.update_communication_style("concise")
+                
+                # Detect technical language
+                technical_words = {"code", "programming", "algorithm", "function", "variable", "data", "server", 
+                                 "system", "technical", "compile", "execute", "implementation"}
+                if len(set(content.lower().split()).intersection(technical_words)) > 2:
+                    profile.update_communication_style("technical")
+            
             await storage_manager.save_user_profile_data(user_id, profile)
             
             # Track the response
@@ -354,7 +595,7 @@ class ResponseGenerator:
             return "... System error. Connection unstable."
     
     async def handle_first_message_of_day(self, message, user_id):
-        """Handle the first message from a user on a new day"""
+        """Handle the first message from a user on a new day with improved continuity"""
         # Check if this is indeed the first message of the day
         if user_id in self.emotion_manager.user_emotions:
             emotions = self.emotion_manager.user_emotions[user_id]
@@ -370,16 +611,33 @@ class ResponseGenerator:
                         # Tailor greeting based on relationship
                         trust = emotions.get("trust", 0)
                         
+                        # Get user name from profile if available
+                        user_name = message.author.display_name
+                        profile = self.conversation_manager.get_or_create_profile(user_id)
+                        if hasattr(profile, 'get_display_name'):
+                            display_name = profile.get_display_name()
+                            if display_name:
+                                user_name = display_name
+                                
+                        # Check for previous conversation topics to reference
+                        topic_reference = ""
+                        if hasattr(self, 'topic_memory') and user_id in self.topic_memory:
+                            remembered_topics = self.topic_memory[user_id]
+                            if remembered_topics:
+                                topic = random.choice(remembered_topics)
+                                if random.random() < 0.3:  # 30% chance to reference previous topic
+                                    topic_reference = f" Still thinking about {topic}?"
+                        
                         if trust > 7:
                             greeting = random.choice([
-                                "... Welcome back.",
-                                "Good to see you again.",
-                                f"Hey {message.author.display_name}."
+                                f"... Welcome back{', ' + user_name if random.random() < 0.7 else ''}.",
+                                f"Good to see you again{', ' + user_name if random.random() < 0.5 else ''}.",
+                                f"Hey {user_name}."
                             ])
                         elif trust > 4:
                             greeting = random.choice([
                                 "... You're back.",
-                                f"Hello, {message.author.display_name}.",
+                                f"Hello, {user_name}.",
                                 "Systems online."
                             ])
                         else:
@@ -389,200 +647,6 @@ class ResponseGenerator:
                                 "Sensors online."
                             ])
                             
-                        await message.channel.send(f"A2: {greeting}")
+                        await message.channel.send(f"A2: {greeting}{topic_reference}")
                 except Exception as e:
                     print(f"Error in handle_first_message_of_day: {e}")
-        
-    async def check_inactive_users(self, bot, storage_manager):
-        """Check for users who haven't interacted recently and send a message if they've been inactive"""
-        now = datetime.now(timezone.utc)
-        
-        # Only process users who have DMs enabled
-        for user_id in self.emotion_manager.dm_enabled_users:
-            # Skip if user is not in emotions database
-            if user_id not in self.emotion_manager.user_emotions:
-                continue
-                
-            emotions = self.emotion_manager.user_emotions[user_id]
-            last_interaction = emotions.get("last_interaction")
-            
-            if not last_interaction:
-                continue
-                
-            try:
-                last_time = datetime.fromisoformat(last_interaction)
-                days_inactive = (now - last_time).days
-                
-                # Only send message for users inactive between 7-14 days
-                # And only if they have higher trust/attachment
-                if 7 <= days_inactive <= 14:
-                    trust = emotions.get("trust", 0)
-                    attachment = emotions.get("attachment", 0)
-                    
-                    # Only check in on users A2 has a relationship with
-                    if trust + attachment > 10:
-                        # Try to get the user object
-                        user = bot.get_user(user_id)
-                        if user:
-                            # Create a personalized message
-                            user_name = self.conversation_manager.get_display_name(user_id) or user.display_name
-                            
-                            message = random.choice([
-                                f"... {user_name}. It's been {days_inactive} days. Still operational?",
-                                f"Noticed your absence. Systems functioning?",
-                                f"... {days_inactive} days since last contact. Status check."
-                            ])
-                            
-                            try:
-                                # Send DM
-                                dm = await user.create_dm()
-                                await dm.send(f"A2: {message}")
-                                
-                                # Record this as an event
-                                event = {
-                                    "type": "absence_check",
-                                    "message": message,
-                                    "timestamp": now.isoformat(),
-                                    "effects": {}  # No direct effects
-                                }
-                                self.emotion_manager.user_events.setdefault(user_id, []).append(event)
-                                
-                                # Save the event
-                                await storage_manager.save_user_profile(user_id, self.emotion_manager)
-                            except Exception as e:
-                                print(f"Error sending DM to {user_id}: {e}")
-            except Exception as e:
-                print(f"Error checking inactive user {user_id}: {e}")
-                
-    async def trigger_random_events(self, bot, storage_manager):
-        """Trigger random emotional events for users"""
-        from config import EMOTION_CONFIG
-        
-        # Get config settings
-        event_chance = EMOTION_CONFIG.get("RANDOM_EVENT_CHANCE", 0.08)  # 8% chance by default
-        cooldown_hours = EMOTION_CONFIG.get("EVENT_COOLDOWN_HOURS", 12)
-        
-        now = datetime.now(timezone.utc)
-        
-        # Define possible random events
-        events = [
-            {
-                "type": "system_glitch",
-                "messages": [
-                    "System error detected. Running diagnostics... Trust parameters fluctuating.",
-                    "... Memory corruption detected. Scanning for damage.",
-                    "Warning: Emotional regulation subsystem malfunction."
-                ],
-                "effects": {"trust": -0.3, "affection_points": -5},
-                "min_relationship": 0  # Can happen at any relationship level
-            },
-            {
-                "type": "memory_resurface",
-                "messages": [
-                    "... A memory fragment surfaced. You remind me of someone I once knew.",
-                    "I remembered something about... a flower? Strange.",
-                    "Had a memory glitch. For a moment I thought... nevermind."
-                ],
-                "effects": {"attachment": +0.5, "trust": +0.2},
-                "min_relationship": 20  # Requires some established relationship
-            },
-            {
-                "type": "defensive_surge",
-                "messages": [
-                    "Warning: Defense protocols activating. Stand back.",
-                    "... Detecting possible threat. Combat systems engaging.",
-                    "Something's wrong. Systems going into defense mode."
-                ],
-                "effects": {"protectiveness": -0.5, "resentment": +0.3},
-                "min_relationship": 10
-            },
-            {
-                "type": "trust_breakthrough",
-                "messages": [
-                    "... I'm beginning to think you might not be so bad after all.",
-                    "I've been analyzing our interactions. You're... different.",
-                    "Maybe humans aren't all what I thought they were."
-                ],
-                "effects": {"trust": +0.7, "attachment": +0.4},
-                "min_relationship": 30  # Only happens with decent relationship
-            },
-            {
-                "type": "vulnerability_moment",
-                "messages": [
-                    "Sometimes I wonder... what happens when an android has no purpose left.",
-                    "Do you ever think about what happens after everything ends?",
-                    "... If my memory gets wiped, would anything about me really remain?"
-                ],
-                "effects": {"attachment": +0.8, "affection_points": +15},
-                "min_relationship": 40  # Only with high trust/attachment
-            }
-        ]
-        
-        # Only process users who have DMs enabled
-        for user_id in self.emotion_manager.dm_enabled_users:
-            # Skip if user is not in emotions database
-            if user_id not in self.emotion_manager.user_emotions:
-                continue
-                
-            emotions = self.emotion_manager.user_emotions[user_id]
-            
-            # Check if event is on cooldown
-            last_event_time = None
-            if user_id in self.emotion_manager.user_events and self.emotion_manager.user_events[user_id]:
-                # Find the most recent event
-                last_event = max(self.emotion_manager.user_events[user_id], 
-                                key=lambda e: datetime.fromisoformat(e["timestamp"]))
-                last_event_time = datetime.fromisoformat(last_event["timestamp"])
-            
-            # Check cooldown
-            if last_event_time and (now - last_event_time).total_seconds() < cooldown_hours * 3600:
-                continue
-                
-            # Calculate relationship score for eligibility
-            relationship_score = self.emotion_manager.get_relationship_score(user_id)
-            
-            # Roll for event chance
-            if random.random() < event_chance:
-                # Filter eligible events based on relationship score
-                eligible_events = [e for e in events if relationship_score >= e["min_relationship"]]
-                
-                if eligible_events:
-                    # Select random event
-                    event = random.choice(eligible_events)
-                    message = random.choice(event["messages"])
-                    
-                    # Apply effects
-                    e = emotions
-                    for stat, change in event["effects"].items():
-                        if stat == "affection_points":
-                            e[stat] = max(-100, min(1000, e.get(stat, 0) + change))
-                        else:
-                            e[stat] = max(0, min(10, e.get(stat, 0) + change))
-                    
-                    # Record the event
-                    event_record = {
-                        "type": event["type"],
-                        "message": message,
-                        "timestamp": now.isoformat(),
-                        "effects": event["effects"]
-                    }
-                    self.emotion_manager.user_events.setdefault(user_id, []).append(event_record)
-                    
-                    # Create a memory of this event
-                    await self.emotion_manager.create_memory_event(
-                        user_id, event["type"], 
-                        f"A2 experienced a {event['type'].replace('_', ' ')}. {message}",
-                        event["effects"], storage_manager
-                    )
-                    
-                    # Try to send a DM to the user
-                    try:
-                        user = bot.get_user(user_id)
-                        if user:
-                            dm = await user.create_dm()
-                            await dm.send(f"A2: {message}")
-                    except Exception as e:
-                        print(f"Error sending event DM to {user_id}: {e}")
-                    
-                    # Save changes
-                    await storage_manager.save_data(self.emotion_manager, None)
