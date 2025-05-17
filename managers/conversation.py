@@ -195,3 +195,69 @@ class ConversationManager:
             if profile.name:
                 return profile.name
         return None
+        
+    def get_user_by_name(self, name_to_find, current_user_id=None):
+        """Find a user by their name, nickname, or preferred name
+        
+        Args:
+            name_to_find (str): The name to search for
+            current_user_id (int, optional): ID of the current user to exclude from search
+            
+        Returns:
+            tuple: (user_id, name_type) or (None, None) if not found
+        """
+        name_to_find = name_to_find.lower().strip()
+        
+        # Skip very short names or common words
+        if len(name_to_find) < 3 or name_to_find.lower() in ["you", "me", "her", "him", "they", "them", "someone", "person"]:
+            return None, None
+        
+        # First check for exact matches in preferred names, nicknames, then regular names
+        for user_id, profile in self.user_profiles.items():
+            # Skip the current user if specified
+            if current_user_id and user_id == current_user_id:
+                continue
+                
+            if profile.preferred_name and profile.preferred_name.lower() == name_to_find:
+                return user_id, "preferred_name"
+            if profile.nickname and profile.nickname.lower() == name_to_find:
+                return user_id, "nickname"
+            if profile.name and profile.name.lower() == name_to_find:
+                return user_id, "name"
+        
+        # If no exact match, try partial matches but only for distinctive names
+        # (avoid matching common parts of names)
+        if len(name_to_find) > 3:
+            for user_id, profile in self.user_profiles.items():
+                if current_user_id and user_id == current_user_id:
+                    continue
+                    
+                if profile.preferred_name and name_to_find in profile.preferred_name.lower():
+                    return user_id, "preferred_name"
+                if profile.nickname and name_to_find in profile.nickname.lower():
+                    return user_id, "nickname"
+                if profile.name and name_to_find in profile.name.lower():
+                    return user_id, "name"
+        
+        return None, None
+    
+    def get_display_name(self, user_id):
+        """Get the best display name for a user
+        
+        Args:
+            user_id (int): The user's ID
+            
+        Returns:
+            str: The user's display name or None if not found
+        """
+        if user_id not in self.user_profiles:
+            return None
+            
+        profile = self.user_profiles[user_id]
+        if profile.preferred_name:
+            return profile.preferred_name
+        if profile.nickname:
+            return profile.nickname
+        if profile.name:
+            return profile.name
+        return None
