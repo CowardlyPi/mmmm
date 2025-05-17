@@ -261,3 +261,64 @@ class ConversationManager:
         if profile.name:
             return profile.name
         return None
+    
+    def get_other_user_conversation(self, user_id, query_terms=None, max_messages=5):
+        """
+        Retrieve conversation history from another user filtered by query terms
+        
+        Args:
+            user_id (int): The user ID to get conversations from
+            query_terms (list, optional): List of terms to filter by
+            max_messages (int, optional): Maximum number of messages to return
+            
+        Returns:
+            list: List of relevant conversation messages
+        """
+        if user_id not in self.conversations:
+            return []
+            
+        # Get the user's conversation history
+        history = self.conversations[user_id]
+        
+        # If no query terms provided, just return the most recent messages
+        if not query_terms:
+            return history[-max_messages:]
+        
+        # Filter messages by query terms
+        relevant_messages = []
+        for msg in history:
+            content = msg.get("content", "").lower()
+            if any(term.lower() in content for term in query_terms):
+                relevant_messages.append(msg)
+        
+        # Return the most recent relevant messages, up to max_messages
+        return relevant_messages[-max_messages:]
+
+    def get_all_users_mentioning(self, name_or_reference, current_user_id=None):
+        """
+        Find all users who have mentioned a specific term or reference
+        
+        Args:
+            name_or_reference (str): The term to search for
+            current_user_id (int, optional): ID of current user to exclude
+            
+        Returns:
+            dict: Dictionary mapping user_ids to relevant messages
+        """
+        results = {}
+        name_lower = name_or_reference.lower()
+        
+        # Check conversations from all users
+        for uid, messages in self.conversations.items():
+            # Skip current user if specified
+            if current_user_id and uid == current_user_id:
+                continue
+                
+            # Find messages mentioning the reference
+            for msg in messages:
+                if name_lower in msg.get("content", "").lower():
+                    if uid not in results:
+                        results[uid] = []
+                    results[uid].append(msg)
+        
+        return results
