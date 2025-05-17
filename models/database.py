@@ -117,7 +117,7 @@ class UserMemory(Base):
     description = Column(Text, nullable=False)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     importance = Column(Float, default=0.5)
-    metadata = Column(JSONB, nullable=True)  # Additional memory metadata
+    memory_metadata = Column(JSONB, nullable=True)  # Additional memory metadata - renamed from 'metadata'
     
     # Relationships
     user = relationship("User", back_populates="memories")
@@ -129,7 +129,7 @@ class UserMemory(Base):
             "description": self.description,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "importance": self.importance,
-            "metadata": self.metadata
+            "metadata": self.memory_metadata  # Return as 'metadata' for compatibility
         }
 
 
