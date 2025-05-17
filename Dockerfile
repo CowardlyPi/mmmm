@@ -48,7 +48,13 @@ RUN echo '#!/usr/bin/env python\nimport os\nimport sys\nfrom pathlib import Path
     chmod +x /app/debug.py
 
 # Copy main files
-COPY main.py bot_helper.py config.py patch_openai.py ./
+COPY main.py config.py patch_openai.py ./
+
+# Copy module directories
+COPY managers/ ./managers/
+COPY models/ ./models/
+COPY utils/ ./utils/
+COPY commands/ ./commands/
 
 # Run an improved patch script to fix the OpenAI client initialization
 RUN echo '#!/usr/bin/env python3\n\
