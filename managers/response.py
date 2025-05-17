@@ -17,6 +17,7 @@ class ResponseGenerator:
         self.conversation_manager = conversation_manager
         self.recent_responses = {}
         self.MAX_RECENT_RESPONSES = 10
+        self.user_references = {}  # Store verified user references
     
     def identify_user_references(self, content, current_user_id):
         """Identify references to other users in the message content
@@ -29,6 +30,30 @@ class ResponseGenerator:
             dict: Dictionary mapping referenced names to user info
         """
         referenced_users = {}
+        
+        # Check for explicit mentions with @username format
+        mention_pattern = r"@([a-zA-Z0-9_]+)"
+        mentions = re.findall(mention_pattern, content)
+        
+        # If there's a question about a specific user being "my dude" etc.
+        is_question_pattern = r"is\s+(?:my\s+)?(?:dude|friend|buddy|pal)\s+@?([a-zA-Z0-9_]+)"
+        is_question_match = re.search(is_question_pattern, content, re.I)
+        
+        if is_question_match:
+            # This is a question about whether someone is "my dude"
+            # We should NOT confirm this without evidence
+            mentioned_name = is_question_match.group(1)
+            # Return the information but mark it as a question
+            for member_id, profile in self.conversation_manager.user_profiles.items():
+                if profile.name and profile.name.lower() == mentioned_name.lower():
+                    return {
+                        "question_about_relationship": {
+                            "name": mentioned_name,
+                            "user_id": member_id,
+                            "display_name": self.conversation_manager.get_display_name(member_id)
+                        }
+                    }
+            return {}  # No matching user found
         
         # Expanded pattern matching for common reference patterns
         reference_patterns = [
@@ -107,6 +132,44 @@ class ResponseGenerator:
                                         }
         
         return referenced_users
+    
+    def extract_conversation_context(self, user_id, current_message):
+        """Extract relevant conversation context to provide better responses
+        
+        Args:
+            user_id (int): The user's ID
+            current_message (str): Current message content
+            
+        Returns:
+            str: Relevant conversation context
+        """
+        if user_id not in self.conversation_manager.conversations:
+            return ""
+            
+        # Get last few messages
+        history = self.conversation_manager.conversations[user_id][-10:]  # Last 10 messages
+        
+        # Look for relevant topics in current message
+        topics = set()
+        important_words = re.findall(r'\b[a-zA-Z]{4,}\b', current_message.lower())
+        topics.update(important_words)
+        
+        # Remove common words
+        common_words = {"what", "when", "where", "which", "have", "about", "that", "this", "know", "help"}
+        topics = topics - common_words
+        
+        # Find relevant messages
+        relevant_messages = []
+        for msg in history:
+            msg_content = msg.get("content", "").lower()
+            if any(topic in msg_content for topic in topics):
+                speaker = "A2" if msg.get("from_bot", False) else "User"
+                relevant_messages.append(f"{speaker}: {msg.get('content', '')}")
+        
+        if not relevant_messages:
+            return ""
+            
+        return "\nRelevant conversation history:\n" + "\n".join(relevant_messages[-5:])
         
     async def generate_a2_response(self, content, trust, user_id, storage_manager):
         """Generate A2's response to a user message"""
@@ -130,8 +193,18 @@ class ResponseGenerator:
         else:
             user_context += f"You are cautious around {current_user_name}. "
         
+        # Handle question about user relationship
+        if "question_about_relationship" in referenced_users:
+            ref_data = referenced_users["question_about_relationship"]
+            ref_name = ref_data["name"]
+            ref_display_name = ref_data["display_name"]
+            
+            user_context += f"\n\n{current_user_name} is asking if '{ref_name}' is their 'dude' or friend. "
+            user_context += f"You DON'T know if this is true, since you don't track friendships between users. "
+            user_context += f"You should respond neutrally without confirming or denying their friendship status."
+        
         # Add referenced user information if any
-        if referenced_users:
+        elif referenced_users:
             # Handle pronoun references
             if "pronoun_reference" in referenced_users:
                 ref_data = referenced_users["pronoun_reference"]
@@ -185,6 +258,9 @@ class ResponseGenerator:
         # Get conversation history
         conversation_history = self.conversation_manager.get_conversation_history(user_id)
         
+        # Extract relevant context based on current message
+        relevant_context = self.extract_conversation_context(user_id, content)
+        
         # Determine A2's current personality state
         personality_state = self.emotion_manager.select_personality_state(user_id, content)
         
@@ -193,6 +269,7 @@ class ResponseGenerator:
             {"role": "system", "content": system_prompt},
             {"role": "system", "content": user_context},
             {"role": "system", "content": f"Previous conversation:\n{conversation_history}"},
+            {"role": "system", "content": relevant_context},
             {"role": "user", "content": content}
         ]
         
