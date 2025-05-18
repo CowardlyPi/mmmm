@@ -226,6 +226,41 @@ class PostgreSQLStorageManager:
         self.logger.info(f"Data save complete for {len(emotion_manager.user_emotions)} users")
         return success
     
+    async def save_dm_settings(self, dm_enabled_users) -> bool:
+        """Save DM permission settings"""
+        try:
+            with self.get_session() as session:
+                # Get all existing settings
+                existing_settings = session.query(DMSettings).all()
+                existing_user_ids = {s.user_id for s in existing_settings}
+                
+                # Update existing settings - disable users no longer in set
+                for setting in existing_settings:
+                    setting.enabled = setting.user_id in dm_enabled_users
+                
+                # Add new users
+                for user_id in dm_enabled_users:
+                    if user_id not in existing_user_ids:
+                        # Check if user exists
+                        user = session.query(User).filter(User.id == user_id).first()
+                        if not user:
+                            user = User(id=user_id)
+                            session.add(user)
+                            session.flush()
+                        
+                        # Create new setting
+                        setting = DMSettings(user_id=user_id, enabled=True)
+                        session.add(setting)
+                
+                # Commit changes
+                session.commit()
+                self.logger.debug(f"Saved DM settings for {len(dm_enabled_users)} users")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Error saving DM settings: {e}")
+            return False
+    
     async def load_data(self, emotion_manager, conversation_manager, batch_size=50) -> bool:
         """Load all user data with pagination support
         
