@@ -261,6 +261,158 @@ class PostgreSQLStorageManager:
             self.logger.error(f"Error saving DM settings: {e}")
             return False
     
+    async def save_user_profile_data(self, user_id: int, profile) -> bool:
+        """Save user profile data to PostgreSQL database
+        
+        Args:
+            user_id: The user's ID
+            profile: The UserProfile object
+            
+        Returns:
+            bool: True if data was saved successfully
+        """
+        try:
+            with self.get_session() as session:
+                # Check if user exists
+                user = session.query(User).filter(User.id == user_id).first()
+                if not user:
+                    user = User(id=user_id)
+                    session.add(user)
+                    session.flush()
+                
+                # Get profile data as dictionary
+                profile_data = profile.to_dict()
+                
+                # Check if profile exists
+                db_profile = session.query(UserProfile).filter(UserProfile.user_id == user_id).first()
+                
+                if not db_profile:
+                    # Create new profile
+                    db_profile = UserProfile(user_id=user_id)
+                    session.add(db_profile)
+                
+                # Update profile fields
+                for key, value in profile_data.items():
+                    if hasattr(db_profile, key):
+                        # Handle date fields
+                        if key in ['created_at', 'updated_at', 'last_interaction'] and value:
+                            try:
+                                setattr(db_profile, key, datetime.fromisoformat(value))
+                            except (ValueError, TypeError):
+                                # Skip invalid date formats
+                                pass
+                        else:
+                            setattr(db_profile, key, value)
+                
+                # Always update the updated_at timestamp
+                db_profile.updated_at = datetime.now(timezone.utc)
+                
+                # Commit changes
+                session.commit()
+                self.logger.debug(f"Saved user profile for {user_id}")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Error saving user profile for {user_id}: {e}")
+            return False
+    
+    async def save_conversation(self, user_id: int, conversation_manager) -> bool:
+        """Save conversation history and summary to PostgreSQL database
+        
+        Args:
+            user_id: The user's ID
+            conversation_manager: The ConversationManager instance
+            
+        Returns:
+            bool: True if data was saved successfully
+        """
+        try:
+            with self.get_session() as session:
+                # Check if user exists
+                user = session.query(User).filter(User.id == user_id).first()
+                if not user:
+                    user = User(id=user_id)
+                    session.add(user)
+                    session.flush()
+                
+                # Save conversation history
+                if user_id in conversation_manager.conversations:
+                    # Get existing conversation messages
+                    existing_messages = session.query(Conversation).filter(
+                        Conversation.user_id == user_id
+                    ).all()
+                    
+                    # Create a lookup of existing messages by content & timestamp to avoid duplicates
+                    # Note: This is a simplistic approach, could be improved with proper message IDs
+                    existing_lookup = {
+                        (msg.content, msg.timestamp.isoformat() if msg.timestamp else None): msg 
+                        for msg in existing_messages
+                    }
+                    
+                    # Process all messages
+                    for msg_data in conversation_manager.conversations[user_id]:
+                        # Extract message fields
+                        content = msg_data.get('content', '')
+                        timestamp_str = msg_data.get('timestamp')
+                        from_bot = msg_data.get('from_bot', False)
+                        topics = msg_data.get('topics', [])
+                        referenced_users = msg_data.get('referenced_users', [])
+                        sentiment = msg_data.get('sentiment')
+                        
+                        # Convert timestamp
+                        try:
+                            timestamp = datetime.fromisoformat(timestamp_str) if timestamp_str else datetime.now(timezone.utc)
+                        except (ValueError, TypeError):
+                            timestamp = datetime.now(timezone.utc)
+                        
+                        # Check if message already exists
+                        if (content, timestamp_str) not in existing_lookup:
+                            # Create new message
+                            message = Conversation(
+                                user_id=user_id,
+                                content=content,
+                                timestamp=timestamp,
+                                from_bot=from_bot,
+                                topics=topics,
+                                referenced_users=referenced_users,
+                                sentiment=sentiment
+                            )
+                            session.add(message)
+                    
+                    self.logger.debug(f"Saved conversation for user {user_id}")
+                
+                # Save conversation summary
+                if user_id in conversation_manager.conversation_summaries:
+                    summary_text = conversation_manager.conversation_summaries[user_id]
+                    
+                    # Check if summary exists
+                    summary = session.query(ConversationSummary).filter(
+                        ConversationSummary.user_id == user_id
+                    ).first()
+                    
+                    if not summary:
+                        # Create new summary
+                        summary = ConversationSummary(
+                            user_id=user_id,
+                            summary=summary_text,
+                            updated_at=datetime.now(timezone.utc)
+                        )
+                        session.add(summary)
+                    else:
+                        # Update existing summary
+                        summary.summary = summary_text
+                        summary.updated_at = datetime.now(timezone.utc)
+                    
+                    self.logger.debug(f"Saved conversation summary for user {user_id}")
+                
+                # Commit all changes
+                session.commit()
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Error saving conversation for user {user_id}: {e}")
+            return False
+    
     async def load_data(self, emotion_manager, conversation_manager, batch_size=50) -> bool:
         """Load all user data with pagination support
         
