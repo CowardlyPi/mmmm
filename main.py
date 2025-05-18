@@ -1,5 +1,5 @@
 """
-Entry point for the A2 Discord bot with PostgreSQL support.
+Entry point for the A2 Discord bot with PostgreSQL support and optimizations.
 """
 import os
 import sys
@@ -8,8 +8,8 @@ from pathlib import Path
 # Import the main bot class
 from bot import A2Bot
 
-# Import transformer utilities
-from utils.transformers_helper import initialize_transformers
+# Import transformer utilities - here we don't initialize transformers at startup anymore
+from utils.transformers_helper import get_model_status
 
 # Import logging utilities
 from utils.logging_helper import setup_logging
@@ -28,12 +28,11 @@ if __name__ == "__main__":
     logger.info("===== A2 Discord Bot Starting =====")
     logger.info(f"Python version: {sys.version}")
     
-    # Initialize transformers only if not disabled
-    if os.getenv("DISABLE_TRANSFORMERS", "0") != "1":
-        logger.info("Initializing transformers...")
-        initialize_transformers()
-    else:
-        logger.info("Transformers disabled by environment variable")
+    # Note: We no longer initialize transformers here - they will be loaded on demand
+    transformers_status = "using on-demand loading"
+    if os.getenv("DISABLE_TRANSFORMERS", "0") == "1":
+        transformers_status = "disabled via environment variable"
+    logger.info(f"Transformer models: {transformers_status}")
     
     # Get environment variables
     token = os.getenv("DISCORD_TOKEN")
@@ -49,6 +48,10 @@ if __name__ == "__main__":
         
     openai_org_id = os.getenv("OPENAI_ORG_ID", "")
     openai_project_id = os.getenv("OPENAI_PROJECT_ID", "")
+    
+    # Get batch size for pagination from env or use default
+    batch_size = int(os.getenv("DATA_BATCH_SIZE", "50"))
+    logger.info(f"Using data batch size: {batch_size}")
     
     # Determine which storage manager to use
     use_postgres = os.getenv("USE_POSTGRES", "0") == "1"
@@ -75,6 +78,6 @@ if __name__ == "__main__":
         )
     
     # Create and run the bot
-    bot = A2Bot(token, app_id, openai_api_key, openai_org_id, openai_project_id, storage_manager)
+    bot = A2Bot(token, app_id, openai_api_key, openai_org_id, openai_project_id, storage_manager, batch_size)
     logger.info("Starting A2 Discord bot...")
     bot.run()
