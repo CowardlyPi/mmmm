@@ -47,7 +47,7 @@ from config import (
 class A2Bot:
     """Main A2 bot implementation handling commands and event loops"""
     
-    def __init__(self, token, app_id, openai_api_key, openai_org_id="", openai_project_id="", storage_manager=None):
+    def __init__(self, token, app_id, openai_api_key, openai_org_id="", openai_project_id="", storage_manager=None, batch_size=50):
         # Get logger
         self.logger = get_logger()
         
@@ -82,6 +82,7 @@ class A2Bot:
         else:
             self.storage_manager = StorageManager(DATA_DIR, USERS_DIR, PROFILES_DIR, DM_SETTINGS_FILE, 
                                                 USER_PROFILES_DIR, CONVERSATIONS_DIR)
+        self.batch_size = batch_size
         
         self.emotion_manager = EmotionManager()
         self.conversation_manager = ConversationManager()
@@ -118,6 +119,7 @@ class A2Bot:
             
             # Debug data directories
             self.logger.info(f"Using storage manager: {self.storage_manager.__class__.__name__}")
+            self.logger.info(f"Using batch size: {self.batch_size}")
             
             if hasattr(self.storage_manager, 'verify_database_connection'):
                 # PostgreSQL storage
@@ -135,7 +137,7 @@ class A2Bot:
                 self.logger.info(f"Found {len(profile_files)} profile files")
             
             # Load all data
-            await self.storage_manager.load_data(self.emotion_manager, self.conversation_manager)
+            await self.storage_manager.load_data(self.emotion_manager, self.conversation_manager, self.batch_size)
             
             # Add first interaction timestamp for users who don't have it
             now = datetime.now(timezone.utc).isoformat()
