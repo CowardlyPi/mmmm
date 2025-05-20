@@ -1,6 +1,7 @@
 """
 Entry point for the A2 Discord bot with modular architecture.
 """
+import os
 import sys
 from core.bot import A2Bot
 from core.initialization import initialize_bot
