@@ -49,8 +49,8 @@ RUN echo '#!/usr/bin/env python\nimport os\nimport sys\nfrom pathlib import Path
     chmod +x /app/debug.py
 
 # Copy files in smaller batches to improve build reliability
-# First, copy the main files
-COPY main.py config.py patch_openai.py bot.py enhanced_a2.py ./
+# First, copy the main files (removing bot.py which is in core/)
+COPY main.py config.py patch_openai.py enhanced_a2.py ./
 
 # Then copy directories one at a time
 COPY core/ ./core/
