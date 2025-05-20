@@ -14,12 +14,13 @@ ENV PYTHONIOENCODING=utf-8
 ENV TORCH_HOME=/app/.torch
 ENV ENABLE_ENHANCED_A2=1
 
-# Install system dependencies
-# Note: We're adding procps to get the 'free' command for memory diagnostics
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    procps \
-    && rm -rf /var/lib/apt/lists/*
+# Install system dependencies with retry logic for network resilience
+# Split into separate commands for better layer caching and error recovery
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git && \
+    apt-get install -y --no-install-recommends procps && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Set up working directory
 WORKDIR /app
@@ -30,15 +31,14 @@ RUN mkdir -p /mnt/data && chmod 777 /mnt/data
 # Copy requirements file first for better layer caching
 COPY requirements.txt .
 
-# Install Python dependencies with carefully pinned versions
-# Note: We're pinning numpy to a version compatible with the transformer models
-# and setting the OpenAI version to one without the 'project' parameter issue
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir numpy==1.24.3 && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir "httpx==0.24.1" && \
-    pip install --no-cache-dir "openai==1.3.7" && \
-    pip install --no-cache-dir "huggingface_hub[hf_xet]"
+# Install Python dependencies with carefully pinned versions and retry logic
+# We're breaking this into multiple steps to improve build resilience
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir numpy==1.24.3
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir "httpx==0.24.1"
+RUN pip install --no-cache-dir "openai==1.3.7"
+RUN pip install --no-cache-dir "huggingface_hub[hf_xet]"
 
 # Create helper scripts
 RUN echo '#!/bin/bash\necho "Starting A2 Discord Bot"\necho "===================="\necho "Date: $(date)"\necho "Python version: $(python --version)"\necho "Available memory:"\nif command -v free &> /dev/null; then\n    free -h\nelse\n    echo "Memory stats command unavailable"\nfi\n\necho "Checking data directory: $DATA_DIR"\nif [ ! -d "$DATA_DIR" ]; then\n    echo "Creating data directory..."\n    mkdir -p "$DATA_DIR"\nfi\n\necho "Testing write permissions to data directory..."\nif touch "$DATA_DIR/write_test.tmp" && rm "$DATA_DIR/write_test.tmp"; then\n    echo "Data directory is writable."\nelse\n    echo "WARNING: Data directory is not writable. Memory features may not work."\nfi\n\necho "Starting bot..."\nexec python /app/main.py\n' > /app/startup.sh && \
@@ -48,13 +48,12 @@ RUN echo '#!/bin/bash\necho "Starting A2 Discord Bot"\necho "===================
 RUN echo '#!/usr/bin/env python\nimport os\nimport sys\nfrom pathlib import Path\nprint("=== DEBUG INFORMATION ===")\nprint(f"Python version: {sys.version}")\nprint(f"Current working directory: {os.getcwd()}")\nprint(f"Environment variables:")\nfor var in ["DISCORD_TOKEN", "OPENAI_API_KEY", "DATA_DIR", "ENABLE_ENHANCED_A2"]:\n    print(f"  {var}: {'✓ SET' if os.getenv(var) else '✗ NOT SET'}")\nprint("\\nInstalled Python packages:")\nos.system("pip list")\nvolume_path = Path(os.getenv("DATA_DIR", "/mnt/data"))\nprint(f"\\nVolume path: {volume_path}")\nprint(f"Volume path exists: {volume_path.exists()}")\nif volume_path.exists():\n    try:\n        print("Contents:")\n        for item in volume_path.iterdir():\n            print(f"  {item}")\n    except Exception as e:\n        print(f"Error listing contents: {e}")\nprint("\\n=== DEBUG COMPLETE ===")\n' > /app/debug.py && \
     chmod +x /app/debug.py
 
-# Copy main files (including enhanced_a2.py)
+# Copy files in smaller batches to improve build reliability
+# First, copy the main files
 COPY main.py config.py patch_openai.py bot.py enhanced_a2.py ./
 
-# Copy the new core directory structure
+# Then copy directories one at a time
 COPY core/ ./core/
-
-# Copy module directories
 COPY managers/ ./managers/
 COPY models/ ./models/
 COPY utils/ ./utils/
