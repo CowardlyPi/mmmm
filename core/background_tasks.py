@@ -75,12 +75,14 @@ class BackgroundTaskManager:
         
         # Start all tasks
         for task in self.tasks:
+            # Get the task name before starting it
+            task_name = task.__name__
             task.start()
-            self.logger.debug(f"Started task: {task.__name__}")
+            self.logger.debug(f"Started task: {task_name}")
     
     def stop_all_tasks(self):
         """Stop all running tasks"""
         for task in self.tasks:
             if task.is_running():
                 task.cancel()
-                self.logger.debug(f"Stopped task: {task.__name__}")
+                self.logger.debug(f"Stopped task")  # Avoid trying to access __name__ on running task
