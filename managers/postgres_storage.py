@@ -8,7 +8,7 @@ from collections import defaultdict, Counter
 from typing import Dict, List, Any, Optional, Set, Union, Tuple, Iterator
 
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, not_, func
+from sqlalchemy import and_, or_, not_, func, text
 
 from models.database import (
     User, UserEmotions, UserMemory, UserEvent, UserMilestone,
@@ -50,7 +50,7 @@ class PostgreSQLStorageManager:
         """Verify database connection is working"""
         try:
             with self.get_session() as session:
-                session.execute("SELECT 1")
+                session.execute(text("SELECT 1"))  # Fixed: Properly use SQLAlchemy text()
                 self.logger.info("Database connection verified: SUCCESS")
                 return True
         except Exception as e:
@@ -162,8 +162,51 @@ class PostgreSQLStorageManager:
                             
                         session.add(memory)
                 
-                # Similar code for events and milestones
-                # [code omitted for brevity as it's the same pattern]
+                # Save events if they exist
+                if user_id in emotion_manager.user_events and emotion_manager.user_events[user_id]:
+                    # Delete existing events first
+                    session.query(UserEvent).filter(UserEvent.user_id == user_id).delete()
+                    
+                    # Add new events
+                    for event_data in emotion_manager.user_events[user_id]:
+                        event = UserEvent(
+                            user_id=user_id,
+                            type=event_data.get('type'),
+                            message=event_data.get('message', ''),
+                            effects=event_data.get('effects', {})
+                        )
+                        
+                        # Parse timestamp if present
+                        if 'timestamp' in event_data:
+                            try:
+                                event.timestamp = datetime.fromisoformat(event_data['timestamp'])
+                            except (ValueError, TypeError):
+                                event.timestamp = datetime.now(timezone.utc)
+                                
+                        session.add(event)
+                
+                # Save milestones if they exist
+                if user_id in emotion_manager.user_milestones and emotion_manager.user_milestones[user_id]:
+                    # Delete existing milestones first
+                    session.query(UserMilestone).filter(UserMilestone.user_id == user_id).delete()
+                    
+                    # Add new milestones
+                    for milestone_data in emotion_manager.user_milestones[user_id]:
+                        milestone = UserMilestone(
+                            user_id=user_id,
+                            name=milestone_data.get('name', ''),
+                            description=milestone_data.get('description', ''),
+                            score=milestone_data.get('score')
+                        )
+                        
+                        # Parse timestamp if present
+                        if 'timestamp' in milestone_data:
+                            try:
+                                milestone.timestamp = datetime.fromisoformat(milestone_data['timestamp'])
+                            except (ValueError, TypeError):
+                                milestone.timestamp = datetime.now(timezone.utc)
+                                
+                        session.add(milestone)
                 
                 # Commit all changes
                 session.commit()
@@ -188,8 +231,44 @@ class PostgreSQLStorageManager:
                     self.logger.info(f"No emotions data found for user {user_id}")
                     return {}
                 
-                # Rest of the loading code for a single user (unchanged)
-                # [code omitted for brevity as it's unchanged]
+                # Load memories
+                memories = session.query(UserMemory).filter(UserMemory.user_id == user_id).all()
+                if memories:
+                    emotion_manager.user_memories[user_id] = [memory.to_dict() for memory in memories]
+                    self.logger.debug(f"Loaded {len(memories)} memories for user {user_id}")
+                
+                # Load events
+                events = session.query(UserEvent).filter(UserEvent.user_id == user_id).all()
+                if events:
+                    emotion_manager.user_events[user_id] = [event.to_dict() for event in events]
+                    self.logger.debug(f"Loaded {len(events)} events for user {user_id}")
+                
+                # Load milestones
+                milestones = session.query(UserMilestone).filter(UserMilestone.user_id == user_id).all()
+                if milestones:
+                    emotion_manager.user_milestones[user_id] = [milestone.to_dict() for milestone in milestones]
+                    self.logger.debug(f"Loaded {len(milestones)} milestones for user {user_id}")
+                
+                # Load relationship progress
+                progress = session.query(RelationshipProgress).filter(RelationshipProgress.user_id == user_id).first()
+                if progress:
+                    emotion_manager.relationship_progress[user_id] = progress.progress_data
+                    self.logger.debug(f"Loaded relationship progress for user {user_id}")
+                
+                # Load interaction stats
+                stats = session.query(InteractionStats).filter(InteractionStats.user_id == user_id).first()
+                if stats:
+                    counter_data = {
+                        'total': stats.total,
+                        'positive': stats.positive,
+                        'negative': stats.negative,
+                        'neutral': stats.neutral
+                    }
+                    if stats.stats_data:
+                        counter_data.update(stats.stats_data)
+                    
+                    emotion_manager.interaction_stats[user_id] = Counter(counter_data)
+                    self.logger.debug(f"Loaded interaction stats for user {user_id}")
                 
                 return emotion_manager.user_emotions[user_id]
                 
