@@ -3,7 +3,7 @@ FROM python:3.10-slim
 
 # Set up metadata labels
 LABEL maintainer="A2 Bot Developer"
-LABEL description="A2 Discord Bot from NieR: Automata"
+LABEL description="A2 Discord Bot from NieR: Automata with modular architecture"
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -51,11 +51,15 @@ RUN echo '#!/usr/bin/env python\nimport os\nimport sys\nfrom pathlib import Path
 # Copy main files (including enhanced_a2.py)
 COPY main.py config.py patch_openai.py bot.py enhanced_a2.py ./
 
+# Copy the new core directory structure
+COPY core/ ./core/
+
 # Copy module directories
 COPY managers/ ./managers/
 COPY models/ ./models/
 COPY utils/ ./utils/
 COPY commands/ ./commands/
+COPY scripts/ ./scripts/
 
 # Run an improved patch script to fix the OpenAI client initialization
 RUN echo '#!/usr/bin/env python3\n\
@@ -64,43 +68,39 @@ import os\n\
 \n\
 print("Starting enhanced OpenAI client initialization fix...")\n\
 \n\
-# Make sure main.py exists\n\
-if not os.path.exists("main.py"):\n\
-    print("ERROR: main.py not found")\n\
+# Check if core/bot.py exists\n\
+if os.path.exists("core/bot.py"):\n\
+    target_file = "core/bot.py"\n\
+    print(f"Using refactored bot structure: {target_file}")\n\
+elif os.path.exists("bot.py"):\n\
+    target_file = "bot.py"\n\
+    print(f"Using original bot structure: {target_file}")\n\
+else:\n\
+    print("ERROR: Could not find bot file")\n\
     exit(1)\n\
 \n\
-# Read the main.py file\n\
-with open("main.py", "r") as file:\n\
+# Read the bot file\n\
+with open(target_file, "r") as file:\n\
     content = file.read()\n\
 \n\
-# Find the A2Bot.__init__ method\n\
-init_pattern = r"def __init__\\(self, token, app_id, openai_api_key.*?\\):(.*?)# Initialize managers"\n\
-init_match = re.search(init_pattern, content, re.DOTALL)\n\
+# Find the OpenAI client initialization\n\
+openai_pattern = r"self\\.openai_client = OpenAI\\(.*?\\)"\n\
+openai_match = re.search(openai_pattern, content, re.DOTALL)\n\
 \n\
-if init_match:\n\
-    init_code = init_match.group(1)\n\
+if openai_match:\n\
+    # Replace with the simplest, most compatible initialization\n\
+    new_init = "self.openai_client = OpenAI(api_key=openai_api_key)"\n\
     \n\
-    # Find the OpenAI client initialization\n\
-    openai_pattern = r"self\\.openai_client = OpenAI\\(.*?\\)"\n\
-    openai_match = re.search(openai_pattern, init_code, re.DOTALL)\n\
+    # Apply the replacement\n\
+    modified_content = content.replace(openai_match.group(0), new_init)\n\
     \n\
-    if openai_match:\n\
-        # Replace with the simplest, most compatible initialization\n\
-        new_init = "self.openai_client = OpenAI(api_key=openai_api_key)"\n\
-        \n\
-        # Apply the replacement\n\
-        modified_init = init_code.replace(openai_match.group(0), new_init)\n\
-        modified_content = content.replace(init_code, modified_init)\n\
-        \n\
-        # Write the modified content back to the file\n\
-        with open("main.py", "w") as file:\n\
-            file.write(modified_content)\n\
-        \n\
-        print("Successfully fixed OpenAI client initialization!")\n\
-    else:\n\
-        print("ERROR: Could not find OpenAI client initialization")\n\
+    # Write the modified content back to the file\n\
+    with open(target_file, "w") as file:\n\
+        file.write(modified_content)\n\
+    \n\
+    print("Successfully fixed OpenAI client initialization!")\n\
 else:\n\
-    print("ERROR: Could not find A2Bot.__init__ method")\n\
+    print("ERROR: Could not find OpenAI client initialization")\n\
 ' > /app/patch_openai.py && \
     chmod +x /app/patch_openai.py && \
     python /app/patch_openai.py
