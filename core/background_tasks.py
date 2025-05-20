@@ -1,5 +1,5 @@
 """
-Background tasks for the A2 Discord bot.
+Modified background_tasks.py with fix for the Loop.__name__ error.
 """
 from discord.ext import tasks
 from utils.logging_helper import get_logger
@@ -61,28 +61,26 @@ class BackgroundTaskManager:
             self.logger.debug("Running save_data_task")
             await self.bot.storage_manager.save_data(self.bot.emotion_manager, self.bot.conversation_manager)
         
-        # Store tasks for management
+        # Store tasks for management with task names in tuples (task, name)
         self.tasks = [
-            check_inactive_users_task,
-            decay_affection_task,
-            decay_annoyance_task,
-            daily_affection_bonus_task,
-            dynamic_emotional_adjustments_task,
-            environmental_mood_effects_task,
-            trigger_random_events_task,
-            save_data_task
+            (check_inactive_users_task, "check_inactive_users_task"),
+            (decay_affection_task, "decay_affection_task"),
+            (decay_annoyance_task, "decay_annoyance_task"),
+            (daily_affection_bonus_task, "daily_affection_bonus_task"),
+            (dynamic_emotional_adjustments_task, "dynamic_emotional_adjustments_task"),
+            (environmental_mood_effects_task, "environmental_mood_effects_task"),
+            (trigger_random_events_task, "trigger_random_events_task"),
+            (save_data_task, "save_data_task")
         ]
         
         # Start all tasks
-        for task in self.tasks:
-            # Get the task name before starting it
-            task_name = task.__name__
+        for task, task_name in self.tasks:
             task.start()
             self.logger.debug(f"Started task: {task_name}")
     
     def stop_all_tasks(self):
         """Stop all running tasks"""
-        for task in self.tasks:
+        for task, _ in self.tasks:
             if task.is_running():
                 task.cancel()
                 self.logger.debug(f"Stopped task")  # Avoid trying to access __name__ on running task
