@@ -139,7 +139,7 @@ def setup_user_commands(bot, emotion_manager, conversation_manager, storage_mana
         
         await ctx.send(embed=embed)
     
-    @bot.command(name="help_me", aliases=["help", "commands"], help="Show available commands")
+    @bot.command(name="help_me", aliases=["commands"], help="Show available commands")
     @rate_limited("general")
     async def enhanced_help(ctx, command_name: str = None):
         """Enhanced help command with categorized commands"""
