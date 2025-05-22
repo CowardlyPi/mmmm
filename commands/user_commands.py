@@ -1,514 +1,376 @@
 """
-User-facing commands for the A2 Discord bot with additional error handling.
+Enhanced user commands with better UX and error handling.
 """
-import random
 import discord
 from discord.ext import commands
 from datetime import datetime, timezone
+from utils.validation_utils import InputValidator, RateLimiter
+from utils.error_handler import safe_execute, log_error_with_aggregation
 
-def setup_user_commands(bot, emotion_manager, conversation_manager, storage_manager):
-    """Set up commands accessible to normal users"""
+def setup_enhanced_user_commands(bot, emotion_manager, conversation_manager, storage_manager):
+    """Set up enhanced user commands with better UX"""
     
-    @bot.command(name="stats")
-    async def stats(ctx):
-        """Display enhanced, dynamic relationship stats"""
+    # Rate limiters for different command types
+    general_limiter = RateLimiter(max_requests=15, time_window=60)
+    heavy_limiter = RateLimiter(max_requests=5, time_window=60)
+    
+    def rate_limited(limiter_type="general"):
+        """Rate limiting decorator"""
+        def decorator(func):
+            async def wrapper(ctx, *args, **kwargs):
+                limiter = general_limiter if limiter_type == "general" else heavy_limiter
+                allowed, reset_time = limiter.is_allowed(ctx.author.id)
+                
+                if not allowed:
+                    await ctx.send(f"A2: Slow down. Try again in {reset_time} seconds.")
+                    return
+                
+                return await func(ctx, *args, **kwargs)
+            return wrapper
+        return decorator
+    
+    @bot.command(name="stats", help="Display your relationship stats with A2")
+    @rate_limited("heavy")
+    @safe_execute(default_return=None)
+    async def enhanced_stats(ctx):
+        """Enhanced stats command with better formatting and error handling"""
         uid = ctx.author.id
         e = emotion_manager.user_emotions.get(uid, {})
         
-        # Calculate relationship score
-        rel_data = emotion_manager.get_relationship_stage(uid)
+        if not e:
+            await ctx.send("A2: No interaction data found. Talk to me first.")
+            return
         
-        # Create a more visual and dynamic embed
+        # Calculate relationship data safely
+        try:
+            rel_data = emotion_manager.get_relationship_stage(uid)
+        except Exception as error:
+            log_error_with_aggregation(error, "calculate_relationship_stage", {"user_id": uid})
+            await ctx.send("A2: Error calculating relationship data.")
+            return
+        
+        # Create enhanced embed
         embed = discord.Embed(
-            title=f"A2's Perception of {ctx.author.display_name}", 
-            description=f"Relationship Stage: **{rel_data['current']['name']}**",
-            color=discord.Color.from_hsv(min(0.99, max(0, rel_data['score']/100)), 0.8, 0.8)  # Color changes with score
+            title=f"A2's Assessment: {ctx.author.display_name}",
+            description=f"**Relationship Level:** {rel_data['current']['name']}",
+            color=discord.Color.from_hsv(min(0.99, max(0, rel_data['score']/100)), 0.7, 0.9)
         )
         
-        # Add description of current relationship
+        # Add relationship description
         embed.add_field(
-            name="Status", 
+            name="Current Status",
             value=rel_data['current']['description'],
             inline=False
         )
         
-        # Show progress to next stage if not at max
+        # Show progress to next level
         if rel_data['next']:
-            # Guard against division by zero
-            progress = 0
-            if rel_data['next']['threshold'] - rel_data['current']['threshold'] != 0:
-                progress = rel_data['progress']
-            
+            progress = rel_data['progress']
             progress_bar = "█" * int(progress/10) + "░" * (10 - int(progress/10))
             embed.add_field(
-                name=f"Progress to {rel_data['next']['name']}", 
+                name=f"Progress to {rel_data['next']['name']}",
                 value=f"`{progress_bar}` {progress:.1f}%",
                 inline=False
             )
         
-        # Visual bars for stats using Discord emoji blocks
-        for stat_name, value, max_val, emoji in [
-            ("Trust", e.get('trust', 0), 10, "🔒"),
-            ("Attachment", e.get('attachment', 0), 10, "🔗"),
-            ("Protectiveness", e.get('protectiveness', 0), 10, "🛡️"),
-            ("Resentment", e.get('resentment', 0), 10, "⚔️"),
-            ("Affection", e.get('affection_points', 0), 1000, "💠"),
-            ("Annoyance", e.get('annoyance', 0), 100, "🔥")
-        ]:
-            # Ensure max_val is never zero to prevent division by zero
-            norm_val = 0
-            if max_val > 0:
-                # Normalize to 0-10 range for emoji bars
-                norm_val = value / max_val * 10 if max_val > 10 else value
-            
-            bar = "█" * int(norm_val) + "░" * (10 - int(norm_val))
-            
-            if stat_name.lower() in ["trust", "attachment", "protectiveness", "resentment"]:
-                desc = f"{emotion_manager.get_emotion_description(stat_name.lower(), value)}"
-            else:
-                desc = f"{value}/{max_val}"
-                
-            embed.add_field(name=f"{emoji} {stat_name}", value=f"`{bar}` {desc}", inline=False)
-        
-        # Add dynamic mood and state info
-        current_state = emotion_manager.select_personality_state(uid, "")
-        embed.add_field(name="Current Mood", value=f"{current_state.capitalize()}", inline=True)
-        
-        # Add interaction stats
-        embed.add_field(name="Total Interactions", value=str(e.get('interaction_count', 0)), inline=True)
-        
-        # Add profile info if available
-        if uid in conversation_manager.user_profiles:
-            profile = conversation_manager.user_profiles[uid]
-            if profile.interests:
-                embed.add_field(name="Recognized Interests", value=', '.join(profile.interests[:3]), inline=True)
-            if profile.personality_traits:
-                embed.add_field(name="Recognized Traits", value=', '.join(profile.personality_traits[:3]), inline=True)
-        
-        # Add a contextual response
-        responses = [
-            "...",
-            "Don't read too much into this.",
-            "Numbers don't matter.",
-            "Still functioning.",
-            "Is this what you wanted to see?",
-            "Analyzing you too, human."
+        # Emotional stats with visual bars and descriptions
+        emotion_fields = [
+            ("Trust", e.get('trust', 0), 10, "🔒", emotion_manager.get_emotion_description("trust", e.get('trust', 0))),
+            ("Attachment", e.get('attachment', 0), 10, "🔗", emotion_manager.get_emotion_description("attachment", e.get('attachment', 0))),
+            ("Protectiveness", e.get('protectiveness', 0), 10, "🛡️", emotion_manager.get_emotion_description("protectiveness", e.get('protectiveness', 0))),
+            ("Resentment", e.get('resentment', 0), 10, "⚔️", emotion_manager.get_emotion_description("resentment", e.get('resentment', 0))),
         ]
         
-        if rel_data['score'] > 60:
-            responses.extend([
-                "Your presence is... acceptable.",
-                "We've come a long way.",
-                "Trust doesn't come easily for me."
-            ])
-        
-        if e.get('annoyance', 0) > 60:
-            responses.extend([
-                "Don't push it.",
-                "You're testing my patience."
-            ])
-        
-        embed.set_footer(text=random.choice(responses))
-        
-        await ctx.send(embed=embed)
-
-    @bot.command(name="memories")
-    async def memories(ctx):
-        """Show memories A2 has formed with this user"""
-        uid = ctx.author.id
-        if uid not in emotion_manager.user_memories or not emotion_manager.user_memories[uid]:
-            await ctx.send("A2: ... No significant memories stored.")
-            return
-        
-        embed = discord.Embed(title="A2's Memory Logs", color=discord.Color.purple())
-        
-        # Sort memories by timestamp (newest first)
-        sorted_memories = sorted(emotion_manager.user_memories[uid], 
-                                key=lambda m: datetime.fromisoformat(m["timestamp"]), 
-                                reverse=True)
-        
-        # Display the 5 most recent memories
-        for i, memory in enumerate(sorted_memories[:5]):
-            timestamp = datetime.fromisoformat(memory["timestamp"])
+        for name, value, max_val, emoji, description in emotion_fields:
+            bar_length = int((value / max_val) * 10) if max_val > 0 else 0
+            bar = "█" * bar_length + "░" * (10 - bar_length)
             embed.add_field(
-                name=f"Memory Log #{len(sorted_memories)-i}",
-                value=f"*{timestamp.strftime('%Y-%m-%d %H:%M')}*\n{memory['description']}",
-                inline=False
+                name=f"{emoji} {name}",
+                value=f"`{bar}` {description}",
+                inline=True
             )
         
-        await ctx.send(embed=embed)
-
-    @bot.command(name="milestones")
-    async def show_milestones(ctx):
-        """Show relationship milestones achieved with this user"""
-        uid = ctx.author.id
-        if uid not in emotion_manager.user_milestones or not emotion_manager.user_milestones[uid]:
-            await ctx.send("A2: No notable milestones recorded yet.")
-            return
+        # Special stats
+        affection = e.get('affection_points', 0)
+        annoyance = e.get('annoyance', 0)
         
-        embed = discord.Embed(title="Relationship Milestones", color=discord.Color.gold())
-        
-        # Sort milestones by timestamp
-        sorted_milestones = sorted(emotion_manager.user_milestones[uid], 
-                                  key=lambda m: datetime.fromisoformat(m["timestamp"]))
-        
-        for i, milestone in enumerate(sorted_milestones):
-            timestamp = datetime.fromisoformat(milestone["timestamp"])
-            embed.add_field(
-                name=f"Milestone #{i+1}",
-                value=f"*{timestamp.strftime('%Y-%m-%d')}*\n{milestone['description']}",
-                inline=False
-            )
-        
-        await ctx.send(embed=embed)
-
-    @bot.command(name="relationship")
-    async def relationship(ctx):
-        """Show detailed relationship progression info"""
-        uid = ctx.author.id
-        rel_data = emotion_manager.get_relationship_stage(uid)
-        e = emotion_manager.user_emotions.get(uid, {})
-        
-        # Create graphical representation
-        embed = discord.Embed(
-            title=f"Relationship with {ctx.author.display_name}",
-            description=f"Overall Score: {rel_data['score']:.1f}/100",
-            color=discord.Color.dark_purple()
+        embed.add_field(
+            name="💠 Affection",
+            value=f"{affection}/1000 points",
+            inline=True
         )
         
-        # Create relationship progression bar
-        stages_bar = ""
-        for i, stage in enumerate(bot.RELATIONSHIP_LEVELS):
-            if rel_data["current"] == stage:
-                stages_bar += "**[" + stage["name"] + "]** → "
-            elif i < bot.RELATIONSHIP_LEVELS.index(rel_data["current"]):
-                stages_bar += stage["name"] + " → "
-            elif i == bot.RELATIONSHIP_LEVELS.index(rel_data["current"]) + 1:
-                stages_bar += stage["name"] + " → ..."
-                break
-            else:
-                continue
+        if annoyance > 10:  # Only show if notable
+            embed.add_field(
+                name="🔥 Annoyance",
+                value=f"{annoyance}/100",
+                inline=True
+            )
         
-        embed.add_field(name="Progression", value=stages_bar, inline=False)
-        
-        # Show current relationship details
+        # Interaction statistics
+        interaction_count = e.get('interaction_count', 0)
         embed.add_field(
-            name="Current Stage", 
-            value=f"**{rel_data['current']['name']}**\n{rel_data['current']['description']}",
+            name="📊 Interactions",
+            value=f"Total: {interaction_count}",
+            inline=True
+        )
+        
+        # Add contextual footer
+        footers = [
+            "Systems operational.",
+            "Data analysis complete.",
+            "Monitoring continues.",
+            "...",
+        ]
+        
+        if rel_data['score'] > 70:
+            footers.extend([
+                "Your presence is... acceptable.",
+                "We've built something here.",
+            ])
+        elif annoyance > 60:
+            footers.extend([
+                "Don't push it.",
+                "Testing my patience.",
+            ])
+        
+        embed.set_footer(text=random.choice(footers))
+        
+        await ctx.send(embed=embed)
+    
+    @bot.command(name="help_me", aliases=["help", "commands"], help="Show available commands")
+    @rate_limited("general")
+    async def enhanced_help(ctx, command_name: str = None):
+        """Enhanced help command with categorized commands"""
+        
+        if command_name:
+            # Show help for specific command
+            cmd = bot.get_command(command_name)
+            if not cmd:
+                await ctx.send(f"A2: Unknown command '{command_name}'.")
+                return
+            
+            embed = discord.Embed(
+                title=f"Command: {cmd.name}",
+                description=cmd.help or "No description available.",
+                color=discord.Color.blue()
+            )
+            
+            if cmd.aliases:
+                embed.add_field(name="Aliases", value=", ".join(cmd.aliases), inline=False)
+            
+            if cmd.signature:
+                embed.add_field(name="Usage", value=f"`!{cmd.name} {cmd.signature}`", inline=False)
+            
+            await ctx.send(embed=embed)
+            return
+        
+        # Show all commands categorized
+        embed = discord.Embed(
+            title="A2 Command Interface",
+            description="Available commands organized by category",
+            color=discord.Color.dark_blue()
+        )
+        
+        # User commands
+        user_commands = [
+            ("stats", "View your relationship statistics"),
+            ("profile", "View your profile as A2 knows it"),
+            ("memories", "View memories A2 has of you"),
+            ("milestones", "View relationship milestones achieved"),
+            ("relationship", "Detailed relationship progression"),
+            ("conversations", "View recent conversation history"),
+        ]
+        
+        user_cmd_text = "\n".join([f"`!{name}` - {desc}" for name, desc in user_commands])
+        embed.add_field(name="📊 Personal Data", value=user_cmd_text, inline=False)
+        
+        # Profile management commands
+        profile_commands = [
+            ("set_name <name>", "Set your preferred name"),
+            ("set_nickname <nickname>", "Set your nickname"),
+            ("update_profile <field> <value>", "Update profile information"),
+            ("clear_profile_field <field>", "Clear a profile field"),
+        ]
+        
+        profile_cmd_text = "\n".join([f"`!{name}` - {desc}" for name, desc in profile_commands])
+        embed.add_field(name="👤 Profile Management", value=profile_cmd_text, inline=False)
+        
+        # Settings commands
+        settings_commands = [
+            ("dm_toggle", "Toggle DM notifications"),
+        ]
+        
+        settings_cmd_text = "\n".join([f"`!{name}` - {desc}" for name, desc in settings_commands])
+        embed.add_field(name="⚙️ Settings", value=settings_cmd_text, inline=False)
+        
+        # Add usage tips
+        embed.add_field(
+            name="💡 Tips",
+            value="• Use `!help_me <command>` for detailed help\n• Commands are rate-limited\n• Talk naturally - A2 learns from conversation",
             inline=False
         )
         
-        # Add interaction stats with safeguards against division by zero
-        stats = emotion_manager.interaction_stats.get(uid, {})
-        total = stats.get("total", 0)
-        if total > 0:  # Only display if there are interactions
-            positive = stats.get("positive", 0)
-            negative = stats.get("negative", 0)
-            neutral = stats.get("neutral", 0)
-            
-            # Calculate percentages safely
-            pos_percent = (positive / total * 100) if total > 0 else 0
-            neg_percent = (negative / total * 100) if total > 0 else 0
-            neut_percent = (neutral / total * 100) if total > 0 else 0
-            
-            stats_txt = f"Total interactions: {total}\n"
-            stats_txt += f"Positive: {positive} ({pos_percent:.1f}%)\n"
-            stats_txt += f"Negative: {negative} ({neg_percent:.1f}%)\n"
-            stats_txt += f"Neutral: {neutral} ({neut_percent:.1f}%)"
-            
-            embed.add_field(name="Interaction Analysis", value=stats_txt, inline=False)
-        
-        # Add key contributing factors
-        factors = []
-        if e.get('trust', 0) > 5:
-            factors.append(f"High trust (+{e.get('trust', 0):.1f})")
-        if e.get('attachment', 0) > 5:
-            factors.append(f"Strong attachment (+{e.get('attachment', 0):.1f})")
-        if e.get('resentment', 0) > 3:
-            factors.append(f"Lingering resentment (-{e.get('resentment', 0):.1f})")
-        if e.get('protectiveness', 0) > 5:
-            factors.append(f"Protective instincts (+{e.get('protectiveness', 0):.1f})")
-        if e.get('affection_points', 0) > 50:
-            # Ensure we don't divide by zero
-            affection_score = 0
-            if abs(e.get('affection_points', 0)) > 0:
-                affection_score = e.get('affection_points', 0)/100
-            factors.append(f"Positive affection (+{affection_score:.1f})")
-        elif e.get('affection_points', 0) < -20:
-            # Ensure we don't divide by zero
-            affection_score = 0
-            if abs(e.get('affection_points', 0)) > 0:
-                affection_score = e.get('affection_points', 0)/100
-            factors.append(f"Negative affection ({affection_score:.1f})")
-        
-        if factors:
-            embed.add_field(name="Key Factors", value="\n".join(factors), inline=False)
-        
-        # Add a personalized note based on relationship
-        if rel_data['score'] < 10:
-            note = "Systems registering high caution levels. Threat assessment ongoing."
-        elif rel_data['score'] < 25:
-            note = "Your presence is tolerable. For now."
-        elif rel_data['score'] < 50:
-            note = "You're... different from the others. Still evaluating."
-        elif rel_data['score'] < 75:
-            note = "I've grown somewhat accustomed to your presence."
-        else:
-            note = "There are few I've trusted this much. Don't make me regret it."
-        
-        embed.set_footer(text=note)
+        embed.set_footer(text="A2: These are the functions I've made available to you.")
         
         await ctx.send(embed=embed)
-
-    @bot.command(name="events")
-    async def show_events(ctx):
-        """Show recent random events"""
+    
+    @bot.command(name="set_name", help="Set your preferred name for A2 to use")
+    @rate_limited("general")
+    async def enhanced_set_name(ctx, *, name: str):
+        """Enhanced name setting with validation"""
         uid = ctx.author.id
-        if uid not in emotion_manager.user_events or not emotion_manager.user_events[uid]:
-            await ctx.send("A2: No notable events recorded.")
+        
+        # Validate the name
+        is_valid, error_message = InputValidator.validate_user_name(name)
+        if not is_valid:
+            await ctx.send(f"A2: Invalid name. {error_message}")
             return
         
-        embed = discord.Embed(title="Recent Events", color=discord.Color.dark_red())
+        # Sanitize the name
+        clean_name = InputValidator.sanitize_text(name, InputValidator.MAX_NAME_LENGTH)
         
-        # Sort events by timestamp (newest first)
-        sorted_events = sorted(emotion_manager.user_events[uid], 
-                              key=lambda e: datetime.fromisoformat(e["timestamp"]), 
-                              reverse=True)
-        
-        for i, event in enumerate(sorted_events[:5]):
-            timestamp = datetime.fromisoformat(event["timestamp"])
+        try:
+            profile = conversation_manager.update_name_recognition(uid, preferred_name=clean_name)
+            await storage_manager.save_user_profile_data(uid, profile)
             
-            # Format the effects for display
-            effects_txt = ""
-            for stat, value in event.get("effects", {}).items():
-                if value >= 0:
-                    effects_txt += f"{stat}: +{value}\n"
-                else:
-                    effects_txt += f"{stat}: {value}\n"
-            
-            embed.add_field(
-                name=f"Event {i+1}: {event['type'].replace('_', ' ').title()}",
-                value=f"*{timestamp.strftime('%Y-%m-%d %H:%M')}*\n"
-                      f"\"{event['message']}\"\n\n"
-                      f"{effects_txt if effects_txt else 'No measurable effects.'}",
-                inline=False
-            )
-        
-        await ctx.send(embed=embed)
-
-    @bot.command(name="profile")
-    async def show_profile(ctx, user_id: discord.Member = None):
-        """Show your profile as A2 knows it"""
-        target_id = user_id.id if user_id else ctx.author.id
-        target_name = user_id.display_name if user_id else ctx.author.display_name
-        
-        if target_id not in conversation_manager.user_profiles:
-            if target_id == ctx.author.id:
-                await ctx.send("A2: I don't have a profile for you yet. Keep talking to me so I can learn more.")
-            else:
-                await ctx.send(f"A2: I don't have a profile for {target_name} yet.")
-            return
-        
-        profile = conversation_manager.user_profiles[target_id]
-        
-        embed = discord.Embed(
-            title=f"Profile: {target_name}",
-            description="Information A2 has learned about you",
-            color=discord.Color.blue()
-        )
-        
-        # Add name information
-        names = []
-        if profile.name:
-            names.append(f"Name: {profile.name}")
-        if profile.nickname:
-            names.append(f"Nickname: {profile.nickname}")
-        if profile.preferred_name:
-            names.append(f"Preferred name: {profile.preferred_name}")
-        
-        if names:
-            embed.add_field(name="Identity", value="\n".join(names), inline=False)
-        
-        # Add personality traits
-        if profile.personality_traits:
-            embed.add_field(
-                name="Personality Traits", 
-                value=", ".join(profile.personality_traits),
-                inline=False
-            )
-        
-        # Add interests
-        if profile.interests:
-            embed.add_field(
-                name="Interests", 
-                value=", ".join(profile.interests),
-                inline=False
-            )
-        
-        # Add notable facts
-        if profile.notable_facts:
-            embed.add_field(
-                name="Notable Information", 
-                value="\n".join(profile.notable_facts),
-                inline=False
-            )
-        
-        # Add relationship context
-        if profile.relationship_context:
-            embed.add_field(
-                name="Relationship Context", 
-                value="\n".join(profile.relationship_context),
-                inline=False
-            )
-        
-        # Add conversation topics
-        if profile.conversation_topics:
-            embed.add_field(
-                name="Common Conversation Topics", 
-                value=", ".join(profile.conversation_topics),
-                inline=False
-            )
-        
-        # Add last updated info
-        embed.set_footer(text=f"Last updated: {datetime.fromisoformat(profile.updated_at).strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        await ctx.send(embed=embed)
-
-    @bot.command(name="set_name")
-    async def set_name(ctx, *, name):
-        """Set your preferred name for A2 to use"""
-        uid = ctx.author.id
-        profile = conversation_manager.update_name_recognition(uid, preferred_name=name)
-        
-        # Save the updated profile
-        await storage_manager.save_user_profile_data(uid, profile)
-        
-        await ctx.send(f"A2: I'll remember your name as {name}.")
-
-    @bot.command(name="set_nickname")
-    async def set_nickname(ctx, *, nickname):
-        """Set your nickname for A2 to use"""
-        uid = ctx.author.id
-        profile = conversation_manager.update_name_recognition(uid, nickname=nickname)
-        
-        # Save the updated profile
-        await storage_manager.save_user_profile_data(uid, profile)
-        
-        await ctx.send(f"A2: I'll remember your nickname as {nickname}.")
-
-    @bot.command(name="conversations")
-    async def show_conversations(ctx):
-        """Show recent conversation history"""
+            await ctx.send(f"A2: I'll remember your name as '{clean_name}'.")
+        except Exception as error:
+            log_error_with_aggregation(error, "set_name", {"user_id": uid, "name": clean_name})
+            await ctx.send("A2: Error updating name. Try again later.")
+    
+    @bot.command(name="update_profile", help="Update your profile information")
+    @rate_limited("general")
+    async def enhanced_update_profile(ctx, field: str, *, value: str):
+        """Enhanced profile update with better validation"""
         uid = ctx.author.id
         
-        if uid not in conversation_manager.conversations or not conversation_manager.conversations[uid]:
-            await ctx.send("A2: No conversation history found.")
-            return
-        
-        embed = discord.Embed(
-            title="Recent Conversation History",
-            description="Last few messages exchanged with A2",
-            color=discord.Color.green()
-        )
-        
-        # Get and format conversation history
-        history = conversation_manager.conversations[uid][-5:]  # Last 5 messages
-        
-        formatted_history = ""
-        for i, msg in enumerate(history):
-            speaker = "A2" if msg.get("from_bot", False) else "You"
-            formatted_history += f"**{speaker}**: {msg.get('content', '')}\n\n"
-        
-        embed.add_field(name="Messages", value=formatted_history or "No messages found.", inline=False)
-        
-        # Add conversation summary if available
-        if uid in conversation_manager.conversation_summaries:
-            summary = conversation_manager.conversation_summaries[uid]
-            if summary and summary != "Not enough conversation history for a summary.":
-                embed.add_field(name="Summary", value=summary, inline=False)
-        
-        await ctx.send(embed=embed)
-
-    @bot.command(name="update_profile")
-    async def update_profile(ctx, field, *, value):
-        """Update a field in your profile"""
-        uid = ctx.author.id
-        
-        if uid not in conversation_manager.user_profiles:
-            conversation_manager.get_or_create_profile(uid, ctx.author.display_name)
-        
-        profile = conversation_manager.user_profiles[uid]
-        
+        # Validate field
         valid_fields = ["interests", "personality_traits", "notable_facts", "relationship_context", "conversation_topics"]
         
         if field not in valid_fields:
-            await ctx.send(f"A2: Invalid field. Valid fields are: {', '.join(valid_fields)}")
+            fields_list = ", ".join(valid_fields)
+            await ctx.send(f"A2: Invalid field. Valid fields are: {fields_list}")
             return
         
-        # Handle list fields
-        if field in ["interests", "personality_traits", "notable_facts", "relationship_context", "conversation_topics"]:
-            # Add to list
-            items = [item.strip() for item in value.split(",")]
+        # Validate the input as a list
+        is_valid, processed_items, error_message = InputValidator.validate_list_input(value, field)
+        if not is_valid:
+            await ctx.send(f"A2: {error_message}")
+            return
+        
+        try:
+            # Get or create profile
+            if uid not in conversation_manager.user_profiles:
+                conversation_manager.get_or_create_profile(uid, ctx.author.display_name)
+            
+            profile = conversation_manager.user_profiles[uid]
+            
+            # Update the field
             current_list = getattr(profile, field, [])
-            for item in items:
-                if item and item not in current_list:
+            
+            # Add new items to existing list
+            for item in processed_items:
+                if item not in current_list:
                     current_list.append(item)
+            
+            # Limit list size
+            if len(current_list) > 20:
+                current_list = current_list[-20:]  # Keep most recent 20
+            
             profile.update_profile(field, current_list)
+            await storage_manager.save_user_profile_data(uid, profile)
             
-            await storage_manager.save_user_profile_data(uid, profile)
-            await ctx.send(f"A2: Updated your {field.replace('_', ' ')} with: {value}")
-        else:
-            # Handle scalar fields
-            profile.update_profile(field, value)
-            await storage_manager.save_user_profile_data(uid, profile)
-            await ctx.send(f"A2: Updated your {field.replace('_', ' ')} to: {value}")
-
-    @bot.command(name="clear_profile_field")
-    async def clear_profile_field(ctx, field):
-        """Clear a field in your profile"""
+            field_display = field.replace('_', ' ')
+            items_text = ", ".join(processed_items)
+            await ctx.send(f"A2: Updated your {field_display}. Added: {items_text}")
+            
+        except Exception as error:
+            log_error_with_aggregation(error, "update_profile", {"user_id": uid, "field": field})
+            await ctx.send("A2: Error updating profile. Try again later.")
+    
+    @bot.command(name="quick_stats", aliases=["qs"], help="Quick stats summary")
+    @rate_limited("general")
+    async def quick_stats(ctx):
+        """Quick, lightweight stats display"""
         uid = ctx.author.id
+        e = emotion_manager.user_emotions.get(uid, {})
         
-        if uid not in conversation_manager.user_profiles:
-            await ctx.send("A2: You don't have a profile yet.")
+        if not e:
+            await ctx.send("A2: No data found.")
             return
         
-        profile = conversation_manager.user_profiles[uid]
-        
-        valid_fields = ["name", "nickname", "preferred_name", "interests", "personality_traits", 
-                       "notable_facts", "relationship_context", "conversation_topics"]
-        
-        if field not in valid_fields:
-            await ctx.send(f"A2: Invalid field. Valid fields are: {', '.join(valid_fields)}")
-            return
-        
-        # Handle list fields
-        if field in ["interests", "personality_traits", "notable_facts", "relationship_context", "conversation_topics"]:
-            profile.update_profile(field, [])
-        else:
-            # Handle scalar fields
-            profile.update_profile(field, None)
-        
-        await storage_manager.save_user_profile_data(uid, profile)
-        await ctx.send(f"A2: Cleared your {field.replace('_', ' ')}.")
-
-    @bot.command(name="dm_toggle")
-    async def toggle_dm(ctx):
-        """Toggle whether A2 can send you DMs for events"""
+        try:
+            score = emotion_manager.get_relationship_score(uid)
+            trust = e.get('trust', 0)
+            attachment = e.get('attachment', 0)
+            
+            # Quick summary
+            status = "Hostile"
+            if score >= 50:
+                status = "Bonded"
+            elif score >= 25:
+                status = "Trusted"
+            elif score >= 10:
+                status = "Neutral"
+            elif score >= 5:
+                status = "Wary"
+            
+            await ctx.send(f"A2: Status: {status} | Trust: {trust:.1f}/10 | Bond: {attachment:.1f}/10 | Score: {score:.1f}")
+            
+        except Exception as error:
+            log_error_with_aggregation(error, "quick_stats", {"user_id": uid})
+            await ctx.send("A2: Error retrieving data.")
+    
+    @bot.command(name="my_data", help="Export your data")
+    @rate_limited("heavy")
+    async def export_data(ctx):
+        """Allow users to export their data"""
         uid = ctx.author.id
         
-        if uid in emotion_manager.dm_enabled_users:
-            emotion_manager.dm_enabled_users.discard(uid)
-            await ctx.send("A2: DM notifications disabled.")
-        else:
-            emotion_manager.dm_enabled_users.add(uid)
-            
-            # Test DM permissions
-            try:
-                dm = await ctx.author.create_dm()
-                await dm.send("A2: DM access confirmed. Notifications enabled.")
-                await ctx.send("A2: DM notifications enabled. Test message sent.")
-            except discord.errors.Forbidden:
-                await ctx.send("A2: Cannot send DMs. Check your privacy settings.")
-                emotion_manager.dm_enabled_users.discard(uid)
+        if uid not in emotion_manager.user_emotions:
+            await ctx.send("A2: No data found for export.")
+            return
         
-        await storage_manager.save_dm_settings(emotion_manager.dm_enabled_users)
+        try:
+            # Collect user data
+            data = {
+                "emotions": emotion_manager.user_emotions.get(uid, {}),
+                "memories": emotion_manager.user_memories.get(uid, []),
+                "events": emotion_manager.user_events.get(uid, []),
+                "milestones": emotion_manager.user_milestones.get(uid, []),
+                "interactions": dict(emotion_manager.interaction_stats.get(uid, {})),
+            }
+            
+            if uid in conversation_manager.user_profiles:
+                data["profile"] = conversation_manager.user_profiles[uid].to_dict()
+            
+            # Create a summary instead of full data (privacy)
+            summary = f"""
+**A2 Data Summary for {ctx.author.display_name}**
+
+**Emotional Stats:**
+- Trust: {data['emotions'].get('trust', 0):.2f}/10
+- Attachment: {data['emotions'].get('attachment', 0):.2f}/10
+- Total Interactions: {data['emotions'].get('interaction_count', 0)}
+
+**Data Counts:**
+- Memories: {len(data['memories'])}
+- Events: {len(data['events'])}
+- Milestones: {len(data['milestones'])}
+
+**Profile Elements:**
+- Interests: {len(data.get('profile', {}).get('interests', []))}
+- Personality traits: {len(data.get('profile', {}).get('personality_traits', []))}
+
+*Full data export can be requested from administrators.*
+            """
+            
+            await ctx.send(f"```{summary}```")
+            
+        except Exception as error:
+            log_error_with_aggregation(error, "export_data", {"user_id": uid})
+            await ctx.send("A2: Error compiling data export.")
+    
+    # Import random for footers
+    import random
