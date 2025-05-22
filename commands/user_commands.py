@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from utils.validation_utils import InputValidator, RateLimiter
 from utils.error_handler import safe_execute, log_error_with_aggregation
 
-def setup_enhanced_user_commands(bot, emotion_manager, conversation_manager, storage_manager):
+def setup_user_commands(bot, emotion_manager, conversation_manager, storage_manager):
     """Set up enhanced user commands with better UX"""
     
     # Rate limiters for different command types
@@ -116,6 +116,7 @@ def setup_enhanced_user_commands(bot, emotion_manager, conversation_manager, sto
         )
         
         # Add contextual footer
+        import random
         footers = [
             "Systems operational.",
             "Data analysis complete.",
@@ -371,6 +372,40 @@ def setup_enhanced_user_commands(bot, emotion_manager, conversation_manager, sto
         except Exception as error:
             log_error_with_aggregation(error, "export_data", {"user_id": uid})
             await ctx.send("A2: Error compiling data export.")
-    
-    # Import random for footers
-    import random
+
+    @bot.command(name="profile", help="View your profile as A2 knows it")
+    @rate_limited("general")
+    async def view_profile(ctx):
+        """View user profile information"""
+        uid = ctx.author.id
+        
+        if uid not in conversation_manager.user_profiles:
+            await ctx.send("A2: No profile data found. Start a conversation to build your profile.")
+            return
+        
+        profile = conversation_manager.user_profiles[uid]
+        summary = profile.get_summary()
+        
+        embed = discord.Embed(
+            title=f"Profile: {ctx.author.display_name}",
+            description=summary or "No profile information available.",
+            color=discord.Color.green()
+        )
+        
+        await ctx.send(embed=embed)
+
+    @bot.command(name="dm_toggle", help="Toggle DM notifications from A2")
+    @rate_limited("general")
+    async def toggle_dm(ctx):
+        """Toggle DM notifications"""
+        uid = ctx.author.id
+        
+        if uid in emotion_manager.dm_enabled_users:
+            emotion_manager.dm_enabled_users.remove(uid)
+            await ctx.send("A2: DM notifications disabled.")
+        else:
+            emotion_manager.dm_enabled_users.add(uid)
+            await ctx.send("A2: DM notifications enabled.")
+        
+        # Save the change
+        await storage_manager.save_data(emotion_manager, conversation_manager)
